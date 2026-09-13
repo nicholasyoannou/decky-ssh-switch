@@ -20,6 +20,11 @@ const setPassword = callable<[string], { username: string; changed: boolean }>("
 // only lists the legacy bIsPassword flag. Supply both for runtime compatibility.
 const passwordInputProps = { type: "password", autoComplete: "new-password" } as const;
 
+function sameStatus(previous: Status | null, next: Status) {
+  return previous !== null && (Object.keys(next) as (keyof Status)[])
+    .every((key) => previous[key] === next[key]);
+}
+
 interface PasswordDialogProps {
   username: string;
   onChanged: (username: string) => void;
@@ -105,32 +110,35 @@ function Content() {
   const [statusError, setStatusError] = useState("");
   const [message, setMessage] = useState("");
   const inFlight = useRef(false);
+  const refreshInFlight = useRef(false);
+  const revision = useRef(0);
   const mounted = useRef(false);
 
-  async function refresh() {
-    if (inFlight.current) return;
-    inFlight.current = true;
-    if (mounted.current) setReading(true);
+  async function refresh(showLoading = false) {
+    if (inFlight.current || refreshInFlight.current) return;
+    refreshInFlight.current = true;
+    const startedAtRevision = revision.current;
+    if (showLoading && mounted.current) setReading(true);
     try {
       const next = await getStatus();
-      if (mounted.current) {
-        setStatus(next);
+      if (mounted.current && revision.current === startedAtRevision) {
+        setStatus((previous) => sameStatus(previous, next) ? previous : next);
         setStatusError("");
       }
     } catch (reason) {
-      if (mounted.current) {
-        setStatus(null);
+      if (mounted.current && revision.current === startedAtRevision) {
+        // Keep the last known switch positions while clearly marking them stale.
         setStatusError(reason instanceof Error ? reason.message : String(reason));
       }
     } finally {
-      inFlight.current = false;
-      if (mounted.current) setReading(false);
+      refreshInFlight.current = false;
+      if (showLoading && mounted.current) setReading(false);
     }
   }
 
   useEffect(() => {
     mounted.current = true;
-    void refresh();
+    void refresh(true);
     const timer = window.setInterval(() => void refresh(), 5000);
     return () => {
       mounted.current = false;
@@ -141,12 +149,18 @@ function Content() {
   async function changeSwitch(kind: "running" | "startup", enabled: boolean) {
     if (inFlight.current) return;
     inFlight.current = true;
+    // An earlier background read must not overwrite the result of this action.
+    // The backend serializes service requests; a pending read never drops a click.
+    revision.current += 1;
     setBusy(true);
     setError("");
     setMessage("");
     try {
       const next = await (kind === "running" ? setEnabled(enabled) : setStartup(enabled));
-      if (mounted.current) setStatus(next);
+      if (mounted.current) {
+        setStatus(next);
+        setStatusError("");
+      }
     } catch (reason) {
       if (mounted.current) {
         setError(reason instanceof Error ? reason.message : String(reason));
@@ -154,7 +168,10 @@ function Content() {
         // error visible, but re-read systemd instead of showing a stale toggle.
         try {
           const next = await getStatus();
-          if (mounted.current) setStatus(next);
+          if (mounted.current) {
+            setStatus(next);
+            setStatusError("");
+          }
         } catch { if (mounted.current) setStatus(null); }
       }
     } finally {
@@ -174,14 +191,14 @@ function Content() {
     />);
   }
 
-  const disabled = busy || reading || !status || status.transitioning;
+  const disabled = busy || reading || !status || !!statusError || status.transitioning;
   return (
     <>
       <PanelSection title="SSH">
         <PanelSectionRow>
           <ToggleField
             label="SSH enabled"
-            description={status ? (status.transitioning ? "SSH is changing state…" : status.masked ? "SSH is masked in system settings." : status.running ? "Remote connections are on." : "Remote connections are off.") : statusError ? "SSH status is unavailable." : "Checking SSH status…"}
+            description={statusError ? "SSH status is unavailable." : status ? (status.transitioning ? "SSH is changing state…" : status.masked ? "SSH is masked in system settings." : status.running ? "Remote connections are on." : "Remote connections are off.") : "Checking SSH status…"}
             checked={status?.running ?? false}
             disabled={disabled || (status?.masked && !status.running)}
             onChange={(enabled) => void changeSwitch("running", enabled)}
@@ -197,7 +214,7 @@ function Content() {
           />
         </PanelSectionRow>
         <PanelSectionRow>
-          <ButtonItem layout="below" disabled={busy || reading} onClick={() => { setError(""); void refresh(); }}>Refresh status</ButtonItem>
+          <ButtonItem layout="below" disabled={busy || reading} onClick={() => { setError(""); void refresh(true); }}>Refresh status</ButtonItem>
         </PanelSectionRow>
         <PanelSectionRow>
           <ButtonItem layout="below" disabled={busy || reading} onClick={openPasswordDialog}>Set password</ButtonItem>
