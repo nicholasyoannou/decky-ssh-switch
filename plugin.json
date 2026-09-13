@@ -1,6 +1,6 @@
 {
   "name": "SSH Switch",
-  "author": "SSH Switch contributors",
+  "author": "nicholasyoannou",
   "api_version": 1,
   "flags": ["root"],
   "publish": {
