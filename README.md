@@ -8,7 +8,7 @@ A small Decky Loader plugin for Steam Deck:
 
 - **SSH enabled** starts or stops SSH now.
 - **Start at boot** enables or disables SSH at system startup, independently of whether it is running now.
-- **Set password** opens a dialog to change the user's Linux account password (normally `deck`).
+- **Change password** verifies the current password, then asks for a new password and confirmation for the Linux account (normally `deck`). If no password is set yet, run `passwd` in Desktop Mode first.
 - **Connect from computer** shows connection details for mounting the Deck's files on Windows, Linux or macOS.
 
 ## Screenshots

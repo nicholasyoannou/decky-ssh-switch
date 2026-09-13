@@ -8,7 +8,9 @@ import ipaddress
 import json
 import os
 import re
+import secrets
 import socket
+import time
 from pathlib import Path
 
 
@@ -181,7 +183,19 @@ def _boolean(value):
         raise ValueError("The switch value must be true or false.")
 
 
-def _hash_password(password):
+def _password_hash(username):
+    try:
+        with Path("/etc/shadow").open(encoding="utf-8") as shadow:
+            for line in shadow:
+                fields = line.rstrip("\n").split(":")
+                if fields[0] == username and len(fields) == 9:
+                    return fields[1]
+    except (OSError, UnicodeError):
+        pass
+    raise RuntimeError("Could not read the local account's password information.")
+
+
+def _hash_password(password, setting=None):
     """Use SteamOS libcrypt, without imposing password quality or length rules."""
     # crypt accepts C strings: reject NUL instead of silently truncating a password.
     if "\x00" in password:
@@ -203,14 +217,19 @@ def _hash_password(password):
     crypt.restype = ctypes.c_char_p
     libc.free.argtypes = [ctypes.c_void_p]
     libc.free.restype = None
-    salt = ctypes.create_string_buffer(192)
-    # NULL prefix selects libcrypt's current default hashing algorithm.
-    if not gensalt(None, 0, os.urandom(32), 32, salt, len(salt)):
-        raise RuntimeError("The system could not prepare a password hash.")
+    if setting is None:
+        salt = ctypes.create_string_buffer(192)
+        # NULL prefix selects libcrypt's current default hashing algorithm.
+        if not gensalt(None, 0, os.urandom(32), 32, salt, len(salt)):
+            raise RuntimeError("The system could not prepare a password hash.")
+        setting = salt.value
+    else:
+        # Reuse the stored algorithm and salt when checking a current password.
+        setting = setting.encode("ascii")
     data = ctypes.c_void_p()
     size = ctypes.c_int()
     try:
-        hashed = crypt(phrase, salt.value, ctypes.byref(data), ctypes.byref(size))
+        hashed = crypt(phrase, setting, ctypes.byref(data), ctypes.byref(size))
         if not hashed or hashed.startswith(b"*"):
             raise RuntimeError("The Linux password library could not represent this password.")
         return hashed.decode("ascii")
@@ -223,6 +242,7 @@ def _hash_password(password):
 class Plugin:
     def __init__(self):
         self._lock = asyncio.Lock()
+        self._password_verification = None
 
     async def get_status(self):
         async with self._lock:
@@ -261,14 +281,39 @@ class Plugin:
                 raise RuntimeError("SSH startup did not reach the requested state. Wait for the status to update before retrying.")
             return after
 
-    async def set_password(self, password):
+    async def verify_current_password(self, password):
+        _require_root()
+        if not isinstance(password, str):
+            raise ValueError("The password must be text.")
+        async with self._lock:
+            self._password_verification = None
+            username = _account()
+            stored = await asyncio.to_thread(_password_hash, username)
+            if not stored or stored.startswith(("!", "*")):
+                return {"verification": None, "password_available": False}
+            candidate = await asyncio.to_thread(_hash_password, password, stored)
+            if not secrets.compare_digest(candidate, stored):
+                return {"verification": None, "password_available": True}
+            token = secrets.token_urlsafe(32)
+            self._password_verification = (token, username, stored, time.monotonic() + 300)
+            return {"verification": token, "password_available": True}
+
+    async def set_password(self, password, verification=""):
         _require_root()
         if not isinstance(password, str):
             raise ValueError("The password must be text.")
         if not password.strip():
             raise ValueError("The password cannot be blank.")
         async with self._lock:
+            grant = self._password_verification
+            # Consume before any write, including failures and timed-out requests.
+            self._password_verification = None
             username = _account()
+            if (not grant or not isinstance(verification, str) or not verification.isascii()
+                    or not secrets.compare_digest(verification, grant[0])
+                    or username != grant[1] or time.monotonic() >= grant[3]
+                    or await asyncio.to_thread(_password_hash, username) != grant[2]):
+                return {"username": username, "changed": False, "verification_required": True}
             executable = next((p for p in ("/usr/bin/chpasswd", "/usr/sbin/chpasswd") if Path(p).is_file()), None)
             if executable is None:
                 raise RuntimeError("The system password tool (chpasswd) is not installed.")
@@ -292,4 +337,4 @@ class Plugin:
 
     async def _unload(self):
         # Systemd owns SSH; closing/reloading Decky must not reset user choices.
-        pass
+        self._password_verification = None

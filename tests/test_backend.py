@@ -6,7 +6,7 @@ import os
 import sys
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock, mock_open, patch
 
 import main
 
@@ -53,10 +53,16 @@ class BackendTests(unittest.IsolatedAsyncioTestCase):
             ("_account", Mock(return_value="deck")),
             ("_require_root", Mock()),
             ("_hash_password", Mock(return_value="$y$synthetic-hash")),
+            ("_password_hash", Mock(return_value="$y$synthetic-hash")),
         ):
             patcher = patch.object(main, target, replacement)
             patcher.start()
             self.addCleanup(patcher.stop)
+
+    async def verified_change(self, password):
+        result = await self.plugin.verify_current_password("current-example")
+        main._hash_password.reset_mock()
+        return await self.plugin.set_password(password, result["verification"])
 
     async def test_status_and_lifecycle_make_no_changes(self):
         await self.plugin._main()
@@ -143,7 +149,7 @@ class BackendTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_mutations_require_root(self):
         with patch.object(main, "_require_root", side_effect=RuntimeError("root required")):
-            for method, value in ((self.plugin.set_enabled, True), (self.plugin.set_startup, True), (self.plugin.set_password, "example-only")):
+            for method, value in ((self.plugin.set_enabled, True), (self.plugin.set_startup, True), (self.plugin.verify_current_password, "example-only"), (self.plugin.set_password, "example-only")):
                 with self.assertRaisesRegex(RuntimeError, "root required"):
                     await method(value)
         self.assertEqual(self.system.calls, [])
@@ -151,7 +157,7 @@ class BackendTests(unittest.IsolatedAsyncioTestCase):
     async def test_only_password_hash_is_sent_to_stdin_for_host_user(self):
         password = "a':$(echo example) 🔒"
         with patch.object(main.Path, "is_file", return_value=True):
-            result = await self.plugin.set_password(password)
+            result = await self.verified_change(password)
         self.assertEqual(result, {"username": "deck", "changed": True})
         args, secret = self.system.calls[-1]
         self.assertEqual(args, ("/usr/bin/chpasswd", "--encrypted"))
@@ -177,29 +183,113 @@ class BackendTests(unittest.IsolatedAsyncioTestCase):
     async def test_nonblank_passwords_keep_their_length_and_characters(self):
         for password in ("a", "short", "a" * 10000, "safe-pass\nroot:injected", "safe\rpass", "safe\tpass", "safe\x7fpass", " 🔒 : ", " a "):
             with self.subTest(password_length=len(password)), patch.object(main.Path, "is_file", return_value=True):
-                self.assertTrue((await self.plugin.set_password(password))["changed"])
+                self.assertTrue((await self.verified_change(password))["changed"])
                 main._hash_password.assert_called_with(password)
                 self.assertEqual(self.system.calls[-1][1], b"deck:$y$synthetic-hash\n")
 
     async def test_hashing_failure_never_updates_account(self):
+        verification = (await self.plugin.verify_current_password("current-example"))["verification"]
         with patch.object(main, "_hash_password", side_effect=RuntimeError("hashing unavailable")), patch.object(main.Path, "is_file", return_value=True):
             with self.assertRaisesRegex(RuntimeError, "hashing unavailable"):
-                await self.plugin.set_password("a")
+                await self.plugin.set_password("a", verification)
         self.assertEqual(self.system.calls, [])
 
     async def test_missing_password_tool_is_reported(self):
         with patch.object(main.Path, "is_file", return_value=False):
             with self.assertRaisesRegex(RuntimeError, "not installed"):
-                await self.plugin.set_password("example-only")
+                await self.verified_change("example-only")
         self.assertEqual(self.system.calls, [])
 
     async def test_password_update_failure_is_generic(self):
         self.system.failure = "password"
         with patch.object(main.Path, "is_file", return_value=True):
             with self.assertRaises(RuntimeError) as caught:
-                await self.plugin.set_password("example-only")
+                await self.verified_change("example-only")
         self.assertNotIn("example-only", str(caught.exception))
         self.assertNotIn("private system details", str(caught.exception))
+
+    async def test_current_password_is_verified_without_retaining_or_returning_it(self):
+        current = " current-example\n🔒 "
+        result = await self.plugin.verify_current_password(current)
+        self.assertTrue(result["verification"])
+        main._hash_password.assert_called_once_with(current, "$y$synthetic-hash")
+        self.assertNotIn(current, repr(result))
+        self.assertNotIn("synthetic-hash", repr(result))
+        self.assertNotIn(current, repr(vars(self.plugin)))
+        self.assertEqual(self.system.calls, [])
+
+    async def test_wrong_current_password_does_not_authorize_a_change(self):
+        with patch.object(main, "_hash_password", return_value="$y$wrong-hash"):
+            result = await self.plugin.verify_current_password("wrong-example")
+        self.assertIsNone(result["verification"])
+        self.assertTrue(result["password_available"])
+        self.assertTrue((await self.plugin.set_password("new-example"))["verification_required"])
+        self.assertEqual(self.system.calls, [])
+
+    async def test_empty_locked_and_disabled_accounts_cannot_bypass_verification(self):
+        for stored in ("", "!", "!!", "!$y$locked", "*", "*LK*"):
+            with self.subTest(stored=stored), patch.object(main, "_password_hash", return_value=stored):
+                result = await self.plugin.verify_current_password("")
+                self.assertEqual(result, {"verification": None, "password_available": False})
+                self.assertTrue((await self.plugin.set_password("new-example"))["verification_required"])
+        main._hash_password.assert_not_called()
+        self.assertEqual(self.system.calls, [])
+
+    async def test_non_text_current_password_is_refused(self):
+        for password in (None, 123, [], {}):
+            with self.assertRaises(ValueError):
+                await self.plugin.verify_current_password(password)
+        main._hash_password.assert_not_called()
+
+    async def test_missing_invalid_and_forged_verifications_cannot_change_password(self):
+        for token in ("", "forged", None, 123, [], {}, "🔒"):
+            await self.plugin.verify_current_password("current-example")
+            result = await self.plugin.set_password("new-example", token)
+            self.assertTrue(result["verification_required"])
+        self.assertEqual(self.system.calls, [])
+
+    async def test_verification_expires_after_five_minutes(self):
+        with patch.object(main, "time", SimpleNamespace(monotonic=lambda: 100)):
+            token = (await self.plugin.verify_current_password("current-example"))["verification"]
+        with patch.object(main, "time", SimpleNamespace(monotonic=lambda: 400)):
+            self.assertTrue((await self.plugin.set_password("new-example", token))["verification_required"])
+        self.assertEqual(self.system.calls, [])
+
+    async def test_verification_cannot_be_reused_by_concurrent_requests(self):
+        token = (await self.plugin.verify_current_password("current-example"))["verification"]
+        with patch.object(main.Path, "is_file", return_value=True):
+            results = await asyncio.gather(*(self.plugin.set_password("new-example", token) for _ in range(2)))
+        self.assertEqual(sum(result["changed"] for result in results), 1)
+        self.assertEqual(len(self.system.changes()), 1)
+
+    async def test_failed_update_consumes_verification(self):
+        token = (await self.plugin.verify_current_password("current-example"))["verification"]
+        self.system.failure = "password"
+        with patch.object(main.Path, "is_file", return_value=True):
+            with self.assertRaises(RuntimeError):
+                await self.plugin.set_password("new-example", token)
+        self.assertTrue((await self.plugin.set_password("new-example", token))["verification_required"])
+        self.assertEqual(len(self.system.changes()), 1)
+
+    async def test_a_later_verification_attempt_invalidates_the_previous_one(self):
+        token = (await self.plugin.verify_current_password("current-example"))["verification"]
+        with patch.object(main, "_hash_password", return_value="$y$wrong-hash"):
+            await self.plugin.verify_current_password("wrong-example")
+        self.assertTrue((await self.plugin.set_password("new-example", token))["verification_required"])
+        self.assertEqual(self.system.calls, [])
+
+    async def test_external_password_or_account_change_invalidates_verification(self):
+        for target, value in (("_password_hash", "$y$changed-externally"), ("_account", "another_user")):
+            token = (await self.plugin.verify_current_password("current-example"))["verification"]
+            with patch.object(main, target, return_value=value):
+                self.assertTrue((await self.plugin.set_password("new-example", token))["verification_required"])
+        self.assertEqual(self.system.calls, [])
+
+    async def test_unloading_discards_verification(self):
+        token = (await self.plugin.verify_current_password("current-example"))["verification"]
+        await self.plugin._unload()
+        self.assertTrue((await self.plugin.set_password("new-example", token))["verification_required"])
+        self.assertEqual(self.system.calls, [])
 
     async def test_status_failure_is_not_reported_as_off(self):
         with patch.object(main, "_run", AsyncMock(return_value=(1, "", "No system bus"))):
@@ -252,6 +342,21 @@ class AccountTests(unittest.TestCase):
 
 
 class HashTests(unittest.TestCase):
+    def test_only_the_exact_local_account_hash_is_read(self):
+        content = "root:root-hash:20000:0:99999:7:::\ndeck-other:other-hash:20000:0:99999:7:::\ndeck:deck-hash:20000:0:99999:7:::\n"
+        with patch.object(main.Path, "open", mock_open(read_data=content)):
+            self.assertEqual(main._password_hash("deck"), "deck-hash")
+
+    def test_missing_malformed_and_unreadable_password_records_are_refused(self):
+        for content in ("", "deck:hash\n", "other:hash:20000:0:99999:7:::\n"):
+            with patch.object(main.Path, "open", mock_open(read_data=content)):
+                with self.assertRaisesRegex(RuntimeError, "Could not read"):
+                    main._password_hash("deck")
+        with patch.object(main.Path, "open", side_effect=PermissionError("sensitive details")):
+            with self.assertRaisesRegex(RuntimeError, "Could not read") as caught:
+                main._password_hash("deck")
+        self.assertNotIn("sensitive details", str(caught.exception))
+
     def test_nul_is_not_silently_truncated(self):
         with self.assertRaisesRegex(ValueError, "NUL"):
             main._hash_password("before\x00after")
@@ -268,6 +373,8 @@ class HashTests(unittest.TestCase):
                 self.assertNotRegex(hashed, r"[\s:]")
                 self.assertEqual(library.crypt(password.encode(), hashed.encode()).decode(), hashed)
                 self.assertNotEqual(library.crypt((password + "x").encode(), hashed.encode()).decode(), hashed)
+                self.assertEqual(main._hash_password(password, hashed), hashed)
+                self.assertNotEqual(main._hash_password(password + "x", hashed), hashed)
 
     @unittest.skipUnless(sys.platform.startswith("linux"), "Uses SteamOS/Linux libcrypt")
     def test_each_hash_has_a_fresh_salt(self):

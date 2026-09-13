@@ -24,7 +24,8 @@ interface ConnectionInfo {
 const getConnectionInfo = callable<[], ConnectionInfo>("get_connection_info");
 const setEnabled = callable<[boolean], Status>("set_enabled");
 const setStartup = callable<[boolean], Status>("set_startup");
-const setPassword = callable<[string], { username: string; changed: boolean }>("set_password");
+const verifyCurrentPassword = callable<[string], { verification: string | null; password_available: boolean }>("verify_current_password");
+const setPassword = callable<[string, string], { username: string; changed: boolean; verification_required?: boolean }>("set_password");
 // Current Steam forwards native input props, although Decky's type declaration
 // only lists the legacy bIsPassword flag. Supply both for runtime compatibility.
 const passwordInputProps = { type: "password", autoComplete: "new-password" } as const;
@@ -74,14 +75,16 @@ interface PasswordDialogProps {
 }
 
 function PasswordDialog({ username, onChanged, closeModal }: PasswordDialogProps) {
+  const [verification, setVerification] = useState<string | null>(null);
   const [password, updatePassword] = useState("");
   const [confirmation, updateConfirmation] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const inFlight = useRef(false);
   const mounted = useRef(false);
-  const blankPassword = password.trim().length === 0;
-  const mismatch = confirmation.length > 0 && password !== confirmation;
+  const verifying = verification === null;
+  const invalid = verifying ? password.length === 0 : password.trim().length === 0 || password !== confirmation;
+  const mismatch = !verifying && confirmation.length > 0 && password !== confirmation;
 
   useEffect(() => {
     mounted.current = true;
@@ -92,8 +95,8 @@ function PasswordDialog({ username, onChanged, closeModal }: PasswordDialogProps
     if (!inFlight.current) closeModal?.();
   }
 
-  async function savePassword() {
-    if (inFlight.current || blankPassword || password !== confirmation) return;
+  async function submitPassword() {
+    if (inFlight.current || invalid) return;
     inFlight.current = true;
     setBusy(true);
     setError("");
@@ -102,7 +105,22 @@ function PasswordDialog({ username, onChanged, closeModal }: PasswordDialogProps
     updatePassword("");
     updateConfirmation("");
     try {
-      const result = await setPassword(value);
+      if (verification === null) {
+        const result = await verifyCurrentPassword(value);
+        if (mounted.current) {
+          if (result.verification) setVerification(result.verification);
+          else setError(result.password_available
+            ? "The current password is incorrect. Try again."
+            : "This account has no usable password. Open a terminal in Desktop Mode and run passwd to set one first.");
+        }
+        return;
+      }
+      const result = await setPassword(value, verification);
+      if (mounted.current && result.verification_required) {
+        setVerification(null);
+        setError("Verify your current password again before making this change.");
+        return;
+      }
       if (!result.changed) throw new Error("Password change was not confirmed.");
       if (mounted.current) {
         onChanged(result.username);
@@ -110,7 +128,12 @@ function PasswordDialog({ username, onChanged, closeModal }: PasswordDialogProps
       }
     } catch {
       // Do not reflect an RPC exception that could include its request payload.
-      if (mounted.current) setError("The system could not update the password. If the request timed out, check which password works before retrying.");
+      if (mounted.current) {
+        setVerification(null);
+        setError(verifying
+          ? "The system could not verify the password. Try again."
+          : "The system could not update the password. If the request timed out, check which password works before retrying.");
+      }
     } finally {
       inFlight.current = false;
       if (mounted.current) setBusy(false);
@@ -119,26 +142,28 @@ function PasswordDialog({ username, onChanged, closeModal }: PasswordDialogProps
 
   return (
     <ConfirmModal
-      strTitle="Set password"
-      strDescription={<>Changes the Linux password for <strong>{username}</strong>, used by SSH and sudo.</>}
-      strOKButtonText={busy ? "Saving…" : "Save password"}
+      strTitle={verifying ? "Verify current password" : "Change password"}
+      strDescription={verifying
+        ? <>Enter the current Linux password for <strong>{username}</strong> to continue.</>
+        : <>Changes the Linux password for <strong>{username}</strong>, used by SSH and sudo.</>}
+      strOKButtonText={busy ? (verifying ? "Verifying…" : "Saving…") : verifying ? "Continue" : "Save password"}
       strCancelButtonText="Cancel"
-      bOKDisabled={busy || blankPassword || password !== confirmation}
+      bOKDisabled={busy || invalid}
       bCancelDisabled={busy}
       bDisableBackgroundDismiss={busy}
       bHideCloseIcon={busy}
-      onOK={savePassword}
+      onOK={submitPassword}
       onCancel={dismiss}
     >
       {/* Keep closeModal on this component so Steam only closes after a successful save. */}
       <div style={{ marginTop: 16 }}>
-        <TextField {...passwordInputProps} label="New password" bIsPassword bShowCopyAction={false} value={password} disabled={busy} onChange={(event) => updatePassword(event.target.value)} />
+        <TextField {...{ ...passwordInputProps, autoComplete: verifying ? "current-password" : "new-password" }} key={verifying ? "current" : "new"} label={verifying ? "Current password" : "New password"} bIsPassword bShowCopyAction={false} value={password} disabled={busy} onChange={(event) => updatePassword(event.target.value)} />
       </div>
-      <div style={{ marginTop: 16 }}>
+      {!verifying && <div style={{ marginTop: 16 }}>
         <TextField {...passwordInputProps} label="Confirm password" bIsPassword bShowCopyAction={false} value={confirmation} disabled={busy} onChange={(event) => updateConfirmation(event.target.value)} />
-      </div>
+      </div>}
       {(busy || error || mismatch) && <div role={error || mismatch ? "alert" : "status"} style={{ fontSize: 14, lineHeight: 1.5, marginTop: 16 }}>
-        {busy ? "Updating password…" : error || "The passwords do not match."}
+        {busy ? (verifying ? "Verifying password…" : "Updating password…") : error || "The passwords do not match."}
       </div>}
     </ConfirmModal>
   );
@@ -255,7 +280,7 @@ function Content() {
           />
         </PanelSectionRow>
         <PanelSectionRow>
-          <ButtonItem layout="below" disabled={busy || loading} onClick={openPasswordDialog}>Set password</ButtonItem>
+          <ButtonItem layout="below" disabled={busy || loading} onClick={openPasswordDialog}>Change password</ButtonItem>
         </PanelSectionRow>
         <PanelSectionRow>
           <ButtonItem layout="below" disabled={busy || loading} onClick={() => showModal(<ConnectionDialog />)}>Connect from computer</ButtonItem>
