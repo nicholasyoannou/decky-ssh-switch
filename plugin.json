@@ -5,6 +5,7 @@
   "flags": ["root"],
   "publish": {
     "tags": ["ssh", "utility", "root"],
-    "description": "Turn SSH on or off, choose whether it starts at boot, and set your Steam Deck account password."
+    "description": "Turn SSH on or off, choose whether it starts at boot, and set your Steam Deck account password.",
+    "image": "https://raw.githubusercontent.com/nicholasyoannou/decky-ssh-switch/7ba1e2b5c8d006488c2d3d077b9a4b21453982ba/assets/logo.png"
   }
 }

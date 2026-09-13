@@ -76,23 +76,23 @@ Keep the `.cmd` and `.ps1` files together. SSHFS-Win's network-drive provider do
 
 ## Build and test
 
-Requires Node.js 20+ and Python 3.10+.
+Requires Node.js 20+, PNPM 9.15.9 and Python 3.10+.
 
 ```sh
-npm ci
-npm test
-npm run package
-npm run verify-package
+pnpm install --frozen-lockfile
+pnpm test
+pnpm run package
+pnpm run verify-package
 ```
 
-Release ZIPs are written to `release/`. Run `npm run clean` to remove generated files.
+Release ZIPs are written to `release/`. Run `pnpm run clean` to remove generated files.
 
 ## CI/CD and releases
 
 Publish the contents of this `decky-ssh` directory as the repository root. The workflow is `.github/workflows/build-release.yml`.
 
 - Every branch push and pull request runs the tests, type-checks, builds and verifies all ZIPs. The archives and checksums are available as workflow artifacts for 14 days.
-- Pushing a version tag such as `v0.2.1` runs the same checks, then creates a GitHub Release containing the plugin, source and three mounting helper ZIPs, plus `SHA256SUMS`. The tag must match `package.json` and `package-lock.json`.
+- Pushing a version tag such as `v0.2.1` runs the same checks, then creates a GitHub Release containing the plugin, source and three mounting helper ZIPs, plus `SHA256SUMS`. The tag must match `package.json`.
 - Tags such as `v0.2.0-beta.1` produce prereleases. The workflow can also be run manually; selecting a version tag enables publishing, while selecting a branch only builds artifacts.
 
 After committing and pushing this project to GitHub, publish the current version with:
@@ -102,7 +102,7 @@ git tag v0.2.1
 git push origin v0.2.1
 ```
 
-For subsequent releases, run `npm version patch` (or `minor` / `major`) in a clean Git checkout, then push the commit and generated tag with `git push origin HEAD --follow-tags`.
+For subsequent releases, run `pnpm version patch` (or `minor` / `major`) in a clean Git checkout, then push the commit and generated tag with `git push origin HEAD --follow-tags`.
 
 ## Development references
 

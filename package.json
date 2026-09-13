@@ -6,6 +6,7 @@
   "author": "nicholasyoannou",
   "type": "module",
   "license": "MIT",
+  "packageManager": "pnpm@9.15.9",
   "engines": {
     "node": ">=20"
   },
@@ -14,7 +15,7 @@
     "build": "rollup -c",
     "typecheck": "tsc --noEmit",
     "test": "python -B -m unittest discover -s tests -v",
-    "package": "node scripts/check-version.mjs && npm run clean && npm run typecheck && npm run build && node scripts/package.mjs",
+    "package": "node scripts/check-version.mjs && pnpm run clean && pnpm run typecheck && pnpm run build && node scripts/package.mjs",
     "verify-package": "node scripts/verify-package.mjs"
   },
   "dependencies": {

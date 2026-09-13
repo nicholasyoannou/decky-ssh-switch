@@ -2,13 +2,14 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { unzipSync, strFromU8 } from "fflate";
+import { thirdPartyFiles } from "./third-party.mjs";
 
 const root = new URL("../", import.meta.url);
 const { version } = JSON.parse(await readFile(new URL("package.json", root), "utf8"));
 assert.deepEqual((await readdir(new URL("release/", root))).sort(), [
   "SHA256SUMS", `ssh-switch-${version}-source.zip`, `ssh-switch-${version}.zip`,
   "ssh-switch-mount-windows.zip", "ssh-switch-mount-linux.zip", "ssh-switch-mount-macos.zip",
-].sort(), "The release directory contains stale or unexpected files. Run npm run package.");
+].sort(), "The release directory contains stale or unexpected files. Run pnpm run package.");
 const checksums = await readFile(new URL("release/SHA256SUMS", root), "utf8");
 for (const source of [false, true]) {
   const filename = `ssh-switch-${version}${source ? "-source" : ""}.zip`;
@@ -18,7 +19,8 @@ for (const source of [false, true]) {
   const files = unzipSync(bytes);
   for (const name of Object.keys(files)) {
     assert.ok(name.startsWith("decky-ssh/") && !name.split("/").includes(".."));
-    assert.ok(!/(^|\/)(node_modules|\.git|__pycache__)(\/|$)/.test(name));
+    assert.ok(!/(^|\/)(node_modules|\.git|__pycache__|docs)(\/|$)/.test(name));
+    assert.ok(!name.endsWith("/assets/logo-prompt.txt"));
   }
   const metadata = JSON.parse(strFromU8(files["decky-ssh/package.json"]));
   assert.equal(metadata.version, version);
@@ -26,12 +28,14 @@ for (const source of [false, true]) {
   assert.equal(plugin.api_version, 1);
   assert.deepEqual(plugin.flags, ["root"]);
   const required = source
-    ? ["package-lock.json", "src/index.tsx", ".editorconfig", ".gitignore", ".gitattributes", ".github/workflows/build-release.yml", "scripts/clean.mjs", "scripts/package.mjs", "scripts/release.sh", "scripts/check-version.mjs", "scripts/verify-package.mjs", "tests/test_backend.py", "tests/test_connection.py", "tests/test_mount.py", "tests/test_mount_windows.ps1", "tests/test_release.py"]
+    ? ["pnpm-lock.yaml", "src/index.tsx", ".editorconfig", ".gitignore", ".gitattributes", ".github/workflows/build-release.yml", "scripts/clean.mjs", "scripts/package.mjs", "scripts/release.sh", "scripts/check-version.mjs", "scripts/verify-package.mjs", "scripts/third-party.mjs", "tests/test_backend.py", "tests/test_connection.py", "tests/test_mount.py", "tests/test_mount_windows.ps1", "tests/test_release.py"]
     : ["dist/index.js"];
   for (const file of ["main.py", "README.md", "assets/logo.png", "assets/screenshots/ssh-controls.png", "assets/screenshots/password-form.png", "LICENSE", "THIRD_PARTY_NOTICES.md", "mount/mount-windows.ps1", "mount/mount-linux.sh", "mount/unmount-linux.sh", "mount/mount-macos.sh", "mount/unmount-macos.sh", "mount/mount-unix.sh", ...required]) {
     assert.deepEqual(Buffer.from(files[`decky-ssh/${file}`]), await readFile(new URL(file, root)), `Stale or missing file: ${file}`);
   }
-  assert.ok(files["decky-ssh/third_party/decky-api/LICENSE"]);
+  for (const [file, original] of thirdPartyFiles) {
+    assert.deepEqual(Buffer.from(files[`decky-ssh/dist/${file}`]), await readFile(new URL(original, root)), `Stale or missing third-party file: ${file}`);
+  }
   for (const name of ["mount-windows.cmd", "unmount-windows.cmd"]) {
     const launcher = Buffer.from(files[`decky-ssh/mount/${name}`]);
     const expectedLauncher = (await readFile(new URL(`mount/${name}`, root), "utf8")).replace(/\r?\n/g, "\r\n");
