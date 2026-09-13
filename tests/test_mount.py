@@ -236,7 +236,8 @@ class WindowsMountTests(unittest.TestCase):
         result = subprocess.run([os.environ["COMSPEC"], "/d", "/c", name, *arguments],
                                 cwd=folder, env=environment, input="\n", capture_output=True, text=True, timeout=20)
         self.assertEqual(result.returncode, code, result.stdout + result.stderr)
-        self.assertEqual(log.read_text(), str(folder))
+        # PowerShell expands the short Windows paths used by hosted runners.
+        self.assertTrue(folder.samefile(log.read_text()))
         self.assertEqual("Press any key to close." in result.stdout, code != 0)
 
     def test_powershell_setup_persistence_and_encrypted_settings(self):
