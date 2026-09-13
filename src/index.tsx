@@ -1,5 +1,5 @@
 import { callable, definePlugin } from "@decky/api";
-import { ButtonItem, ConfirmModal, PanelSection, PanelSectionRow, TextField, ToggleField, showModal, staticClasses } from "@decky/ui";
+import { ButtonItem, ConfirmModal, PanelSection, PanelSectionRow, TextField, ToggleField, showModal } from "@decky/ui";
 import { useEffect, useRef, useState } from "react";
 
 interface Status {
@@ -147,42 +147,40 @@ function PasswordDialog({ username, onChanged, closeModal }: PasswordDialogProps
 function Content() {
   const [status, setStatus] = useState<Status | null>(null);
   const [busy, setBusy] = useState(false);
-  const [reading, setReading] = useState(false);
   const [error, setError] = useState("");
   const [statusError, setStatusError] = useState("");
   const [message, setMessage] = useState("");
   const inFlight = useRef(false);
-  const refreshInFlight = useRef(false);
   const revision = useRef(0);
   const mounted = useRef(false);
 
-  async function refresh(showLoading = false) {
-    if (inFlight.current || refreshInFlight.current) return;
-    refreshInFlight.current = true;
-    const startedAtRevision = revision.current;
-    if (showLoading && mounted.current) setReading(true);
-    try {
-      const next = await getStatus();
-      if (mounted.current && revision.current === startedAtRevision) {
-        setStatus((previous) => sameStatus(previous, next) ? previous : next);
-        setStatusError("");
-      }
-    } catch (reason) {
-      if (mounted.current && revision.current === startedAtRevision) {
-        // Keep the last known switch positions while clearly marking them stale.
-        setStatusError(reason instanceof Error ? reason.message : String(reason));
-      }
-    } finally {
-      refreshInFlight.current = false;
-      if (showLoading && mounted.current) setReading(false);
-    }
-  }
-
   useEffect(() => {
+    let active = true;
+    let reading = false;
     mounted.current = true;
-    void refresh(true);
+    async function refresh() {
+      if (inFlight.current || reading) return;
+      reading = true;
+      const startedAtRevision = revision.current;
+      try {
+        const next = await getStatus();
+        if (active && revision.current === startedAtRevision) {
+          setStatus((previous) => sameStatus(previous, next) ? previous : next);
+          setStatusError("");
+        }
+      } catch (reason) {
+        if (active && revision.current === startedAtRevision) {
+          // Retain the last switch positions, but disable them until status recovers.
+          setStatusError(reason instanceof Error ? reason.message : String(reason));
+        }
+      } finally {
+        reading = false;
+      }
+    }
+    void refresh();
     const timer = window.setInterval(() => void refresh(), 5000);
     return () => {
+      active = false;
       mounted.current = false;
       window.clearInterval(timer);
     };
@@ -233,10 +231,11 @@ function Content() {
     />);
   }
 
-  const disabled = busy || reading || !status || !!statusError || status.transitioning;
+  const loading = !status && !statusError;
+  const disabled = busy || !status || !!statusError || status.transitioning;
   return (
     <>
-      <PanelSection title="SSH">
+      <PanelSection title="SETTINGS">
         <PanelSectionRow>
           <ToggleField
             label="SSH enabled"
@@ -256,10 +255,10 @@ function Content() {
           />
         </PanelSectionRow>
         <PanelSectionRow>
-          <ButtonItem layout="below" disabled={busy || reading} onClick={openPasswordDialog}>Set password</ButtonItem>
+          <ButtonItem layout="below" disabled={busy || loading} onClick={openPasswordDialog}>Set password</ButtonItem>
         </PanelSectionRow>
         <PanelSectionRow>
-          <ButtonItem layout="below" disabled={busy || reading} onClick={() => showModal(<ConnectionDialog />)}>Connect from computer</ButtonItem>
+          <ButtonItem layout="below" disabled={busy || loading} onClick={() => showModal(<ConnectionDialog />)}>Connect from computer</ButtonItem>
         </PanelSectionRow>
         {status?.active_state === "failed" && <PanelSectionRow><div role="status">SSH failed to start. Check its service status in Desktop Mode.</div></PanelSectionRow>}
       </PanelSection>
@@ -274,7 +273,6 @@ function Content() {
 
 export default definePlugin(() => ({
   name: "SSH Switch",
-  titleView: <div className={staticClasses.Title}>SSH Switch</div>,
   content: <Content />,
   icon: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" width="1em" height="1em" aria-hidden="true"><path d="m4 5 6 6-6 6M13 18h7" /></svg>,
 }));

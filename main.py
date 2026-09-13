@@ -118,7 +118,7 @@ async def _status():
 async def _change(action):
     code, _, _ = await _run(SYSTEMCTL, "--no-ask-password", action, SERVICE)
     if code != 0:
-        raise RuntimeError(f"Could not {action} SSH. Check 'systemctl status sshd.service' in Desktop Mode, then refresh.")
+        raise RuntimeError(f"Could not {action} SSH. Check 'systemctl status sshd.service' in Desktop Mode.")
 
 
 async def _connection_info():
