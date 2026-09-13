@@ -1,6 +1,9 @@
 #Requires -Version 5.1
-[CmdletBinding()]
-param([switch] $Configure)
+[CmdletBinding(DefaultParameterSetName = 'Mount')]
+param(
+    [Parameter(ParameterSetName = 'Mount')][switch] $Configure,
+    [Parameter(ParameterSetName = 'Unmount')][switch] $Unmount
+)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -169,18 +172,59 @@ function Import-MountSettings([string] $Path) {
     }
 }
 
-function Save-MountSettings($Settings, [string] $Path) {
-    # Export-Clixml encrypts PSCredential with Windows DPAPI for this account/PC.
-    # Keep personal connection data outside the downloaded script/repository.
+function Save-DataFile($Data, [string] $Path) {
     $null = [IO.Directory]::CreateDirectory((Split-Path -Parent $Path))
     $temporary = $Path + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
     try {
-        $Settings | Export-Clixml -LiteralPath $temporary -Depth 5 -Encoding UTF8
+        $Data | Export-Clixml -LiteralPath $temporary -Depth 5 -Encoding UTF8
         if ([IO.File]::Exists($Path)) { [IO.File]::Replace($temporary, $Path, [NullString]::Value) }
         else { [IO.File]::Move($temporary, $Path) }
     } finally {
         if ([IO.File]::Exists($temporary)) { [IO.File]::Delete($temporary) }
     }
+}
+
+function Save-MountSettings($Settings, [string] $Path) {
+    # Export-Clixml encrypts PSCredential with Windows DPAPI for this account/PC.
+    Save-DataFile $Settings $Path
+}
+
+function Get-MountRecordPath {
+    return Join-Path (Split-Path -Parent (Get-SettingsPath)) 'mounted-windows.xml'
+}
+
+function Import-MountRecord {
+    $path = Get-MountRecordPath
+    if (-not (Test-Path -LiteralPath $path)) { return [pscustomobject]@{ Version = 1; Mounts = @() } }
+    try {
+        $record = Import-Clixml -LiteralPath $path
+        if ($record.Version -ne 1 -or @($record.Mounts).Count -gt 23) { throw 'Invalid mount record.' }
+        $letters = @()
+        foreach ($mount in $record.Mounts) {
+            if ($mount.Drive -cnotmatch '^[D-Z]$' -or $letters -contains $mount.Drive -or
+                $mount.Target -cnotmatch '^\\\\sshfs\.r\\([^@\\]+)@([^!\\]+)(?:!([0-9]+))?(\\.*)?$') {
+                throw 'Invalid recorded drive.'
+            }
+            $username, $address, $port, $folder = $Matches[1], $Matches[2], $Matches[3], $Matches[4]
+            if (-not $port) { $port = '22' }
+            $remote = if ($folder) { $folder.Replace('\', '/') } else { '/' }
+            Test-ConnectionInput $address $port $username $remote
+            $letters += $mount.Drive
+        }
+        return $record
+    } catch {
+        throw "Cannot read the mount record at $path. Disconnect the drives in File Explorer, then delete that file and run mount-windows.cmd again."
+    }
+}
+
+function Save-MountedDrive([string] $Letter, [string] $Target) {
+    $record = Import-MountRecord
+    $record.Mounts = @($record.Mounts | Where-Object { $_.Drive -cne $Letter }) + @(
+        [pscustomobject]@{ Drive = $Letter; Target = $Target }
+    )
+    # Always record successful mounts, even when saving settings was declined.
+    # This file contains only drive letters and destinations, never credentials.
+    Save-DataFile $record (Get-MountRecordPath)
 }
 
 function Get-DriveTarget([string] $Letter) {
@@ -198,6 +242,7 @@ function Get-DriveTarget([string] $Letter) {
 
 function Connect-Mounts($Settings) {
     Test-MountSettings $Settings
+    $null = Import-MountRecord
     # Check every letter before making any changes. Never replace other drives.
     foreach ($mount in $Settings.Mounts) {
         $target = Get-DriveTarget $mount.Drive
@@ -212,6 +257,7 @@ function Connect-Mounts($Settings) {
         $target = Get-DriveTarget $letter
         if ($target -and $target -cne $path) { throw "${letter}: is already in use." }
         if ($target -and (Test-Path -LiteralPath "${letter}:\" -ErrorAction SilentlyContinue)) {
+            Save-MountedDrive $letter $path
             Write-Host "$($mount.Name) is already mounted at ${letter}:\"
             continue
         }
@@ -226,8 +272,59 @@ function Connect-Mounts($Settings) {
         } catch {
             throw "Could not mount $($mount.Name) at ${letter}: $($_.Exception.Message) Check the address, password and folder. To change saved settings, run mount-windows.cmd -Configure."
         }
+        try { Save-MountedDrive $letter $path }
+        catch { throw "${letter}: mounted, but its location could not be saved for unmounting. Disconnect it in File Explorer. $($_.Exception.Message)" }
         Write-Host "$($mount.Name) mounted at ${letter}:\"
     }
+}
+
+function Disconnect-NetworkDrive([string] $Letter) {
+    if (-not ('SshSwitch.Network' -as [type])) {
+        Add-Type @'
+using System.Runtime.InteropServices;
+namespace SshSwitch {
+    public static class Network {
+        [DllImport("mpr.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
+        public static extern int WNetCancelConnection2W(string name, int flags, bool force);
+    }
+}
+'@
+    }
+    # Remove the remembered mapping too, so Windows won't restore it at logon.
+    # Refuse to force a disconnect while files are open.
+    $code = [SshSwitch.Network]::WNetCancelConnection2W("${Letter}:", 1, $false)
+    if ($code -ne 0) {
+        $message = (New-Object ComponentModel.Win32Exception($code)).Message
+        throw "$message (Windows error $code). Close files and windows using ${Letter}: and try again."
+    }
+    Remove-PSDrive -Name $Letter -ErrorAction SilentlyContinue
+}
+
+function Unmount-SteamDeck {
+    $record = Import-MountRecord
+    if (@($record.Mounts).Count -eq 0) { Write-Host 'No recorded drives to unmount.'; return }
+    $failed = $false
+    foreach ($mount in @($record.Mounts)) {
+        $letter = $mount.Drive
+        $target = Get-DriveTarget $letter
+        if (-not $target) {
+            Write-Host "${letter}: is already disconnected."
+        } elseif ($target -cne $mount.Target) {
+            Write-Host "Skipping ${letter}: it now points somewhere else."
+        } else {
+            try { Disconnect-NetworkDrive $letter }
+            catch {
+                Write-Warning "Could not unmount ${letter}: $($_.Exception.Message)"
+                $failed = $true
+                continue
+            }
+            Write-Host "${letter}: unmounted."
+        }
+        $record.Mounts = @($record.Mounts | Where-Object { $_.Drive -cne $letter })
+        Save-DataFile $record (Get-MountRecordPath)
+    }
+    if ($failed) { throw 'Some drives could not be unmounted. Close files using them and run unmount-windows.cmd again.' }
+    Write-Host 'Saved connection settings are kept. Run mount-windows.cmd to reconnect.'
 }
 
 function Mount-SteamDeck([switch] $Configure) {
@@ -256,13 +353,23 @@ function Mount-SteamDeck([switch] $Configure) {
             # Choosing not to save during reconfiguration also forgets old data.
             Remove-Item -LiteralPath $settingsPath
         }
-        Write-Host 'You can close this window. To disconnect, right-click the drive in File Explorer > Disconnect.'
+        Write-Host 'You can close this window. To disconnect these drives later, run unmount-windows.cmd.'
     } finally {
         if ($settings -and $settings.Credential) { $settings.Credential.Password.Dispose() }
     }
 }
 
 if ($MyInvocation.InvocationName -ne '.') {
-    try { Mount-SteamDeck -Configure:$Configure }
+    $lock = $null
+    try {
+        # Serialize launcher runs so mount/unmount cannot overwrite each other's record.
+        $directory = Split-Path -Parent (Get-SettingsPath)
+        $null = [IO.Directory]::CreateDirectory($directory)
+        try { $lock = [IO.File]::Open((Join-Path $directory 'mount-windows.lock'), 'OpenOrCreate', 'ReadWrite', 'None') }
+        catch { throw 'Another mount or unmount helper is running, or its data folder is not writable.' }
+        if ($Unmount) { Unmount-SteamDeck }
+        else { Mount-SteamDeck -Configure:$Configure }
+    }
     catch { [Console]::Error.WriteLine('SSH Switch: ' + $_.Exception.Message); exit 1 }
+    finally { if ($lock) { $lock.Dispose() } }
 }

@@ -115,13 +115,20 @@ try {
 # Mock only OS mapping operations; exercise the real preflight/reuse/reconnect
 # logic without altering the developer's actual drives or network.
 & {
+    $script:recordFile = Join-Path $temporary 'mounted-windows.xml'
+    function Get-MountRecordPath { return $script:recordFile }
     $script:targets = @{}
     $script:connected = @{}
     $script:mapped = New-Object 'Collections.Generic.List[string]'
     $script:deleted = New-Object 'Collections.Generic.List[string]'
     $script:failMount = $false
+    $script:failLetter = ''
+    $script:busyLetter = ''
     function Get-DriveTarget([string] $Letter) { return $script:targets[$Letter] }
-    function Test-Path([string] $LiteralPath) { return $script:connected[$LiteralPath.Substring(0, 1)] -eq $true }
+    function Test-Path([string] $LiteralPath) {
+        if ($LiteralPath -match '^[D-Z]:\\$') { return $script:connected[$LiteralPath.Substring(0, 1)] -eq $true }
+        return Microsoft.PowerShell.Management\Test-Path -LiteralPath $LiteralPath
+    }
     function net.exe {
         Assert-True ($args[0] -eq 'use' -and $args[2] -eq '/delete') 'Unexpected net operation.'
         $script:deleted.Add($args[1])
@@ -132,10 +139,16 @@ try {
         param($Name, $PSProvider, $Root, $Credential, [switch] $Persist, $Scope)
         Assert-True ($Persist -and $Scope -eq 'Global' -and $PSProvider -eq 'FileSystem') 'Drive must outlive the script.'
         Assert-True ($Credential -is [Management.Automation.PSCredential]) 'Use a credential object, not a command-line password.'
-        if ($script:failMount) { throw 'Synthetic network failure' }
+        if ($script:failMount -or $Name -eq $script:failLetter) { throw 'Synthetic network failure' }
         $script:mapped.Add($Name)
         $script:targets[$Name] = $Root
         $script:connected[$Name] = $true
+    }
+    function Disconnect-NetworkDrive([string] $Letter) {
+        if ($Letter -eq $script:busyLetter) { throw 'Synthetic open-file error' }
+        $script:deleted.Add($Letter + ':')
+        $script:targets.Remove($Letter)
+        $script:connected.Remove($Letter)
     }
     $credential = New-Object Management.Automation.PSCredential('deck', (New-TestSecret 'synthetic'))
     $separate.Credential = $credential
@@ -146,16 +159,67 @@ try {
         $script:targets.Clear()
         Connect-Mounts $separate
         Assert-True (($script:mapped -join ',') -eq 'X,Y,Z') 'All requested drives should mount.'
+        Assert-True (((Import-MountRecord).Mounts.Drive -join ',') -eq 'X,Y,Z') 'All successful mounts must be recorded.'
         $script:mapped.Clear()
         Connect-Mounts $separate
         Assert-True ($script:mapped.Count -eq 0 -and $script:deleted.Count -eq 0) 'Repeat runs must reuse active drives.'
+        Assert-True (@((Import-MountRecord).Mounts).Count -eq 3) 'Repeat runs must not duplicate mount records.'
         $script:connected['Y'] = $false
         Connect-Mounts $separate
         Assert-True (($script:mapped -join ',') -eq 'Y' -and ($script:deleted -join ',') -eq 'Y:') 'Only the disconnected matching drive should reconnect.'
         $script:targets.Clear()
         $script:failMount = $true
         Assert-Throws { Connect-Mounts $separate }
-    } finally { $credential.Password.Dispose() }
+        $script:failMount = $false
+        [IO.File]::Delete($script:recordFile)
+        $script:failLetter = 'Y'
+        Assert-Throws { Connect-Mounts $separate }
+        Assert-True (((Import-MountRecord).Mounts.Drive -join ',') -eq 'X') 'Partial success must remain available to unmount.'
+        $script:deleted.Clear()
+        Unmount-SteamDeck
+        Assert-True (($script:deleted -join ',') -eq 'X:') 'Unmount must handle partial setup.'
+        $script:failLetter = ''
+        Connect-Mounts $separate
+        $script:deleted.Clear()
+        $script:busyLetter = 'Y'
+        Assert-Throws { Unmount-SteamDeck }
+        Assert-True (($script:deleted -join ',') -eq 'X:,Z:') 'A busy drive must not prevent other recorded drives from unmounting.'
+        Assert-True (((Import-MountRecord).Mounts.Drive -join ',') -eq 'Y') 'Keep failed unmounts for retry.'
+        $script:busyLetter = ''
+        Unmount-SteamDeck
+        Assert-True (@((Import-MountRecord).Mounts).Count -eq 0) 'Successful retry must clear the record.'
+        $script:deleted.Clear()
+        Unmount-SteamDeck
+        Assert-True ($script:deleted.Count -eq 0) 'Repeated unmount must do nothing.'
+
+        Connect-Mounts $separate
+        $script:targets['Y'] = '\\unrelated\share'
+        $script:targets.Remove('Z')
+        $script:targets['S'] = '\\unrecorded\share'
+        $script:deleted.Clear()
+        Unmount-SteamDeck
+        Assert-True (($script:deleted -join ',') -eq 'X:') 'Leave reused letters, missing drives and unrecorded drives alone.'
+        Assert-True ($script:targets['Y'] -ceq '\\unrelated\share' -and $script:targets.ContainsKey('S')) 'Unrelated drives were modified.'
+
+        # Reconfiguring to a new letter retains the earlier tracked mount.
+        $script:targets.Clear()
+        $single.Credential = $credential
+        Connect-Mounts $single
+        Connect-Mounts $separate
+        Assert-True (@((Import-MountRecord).Mounts).Count -eq 4) 'Reconfiguration must retain earlier drives for unmounting.'
+        Unmount-SteamDeck
+        [IO.File]::WriteAllText($script:recordFile, 'broken record')
+        $script:deleted.Clear()
+        Assert-Throws { Unmount-SteamDeck }
+        Assert-True ($script:deleted.Count -eq 0) 'A broken record must not trigger disconnections.'
+        Save-DataFile ([pscustomobject]@{ Version = 1; Mounts = @([pscustomobject]@{ Drive = 'S'; Target = '\\unrelated\share' }) }) $script:recordFile
+        Assert-Throws { Unmount-SteamDeck }
+        Assert-True ($script:deleted.Count -eq 0) 'Only validated SSHFS destinations may be disconnected.'
+    } finally {
+        $credential.Password.Dispose()
+        if ([IO.File]::Exists($script:recordFile)) { [IO.File]::Delete($script:recordFile) }
+        if ([IO.Directory]::Exists($temporary)) { [IO.Directory]::Delete($temporary) }
+    }
 }
 
 # Full first-run/saved-run flow with a real encrypted data file and mocked mounts.
@@ -164,11 +228,13 @@ try {
     $script:mountCalls = 0
     $script:mountFails = $false
     function Get-SettingsPath { return $script:settingsFile }
+    function Get-DriveTarget { return $null }
     function Initialize-MountDependencies { return 'installed' }
     function Connect-Mounts($Settings) {
         Test-MountSettings $Settings
         Assert-True ($Settings.Credential.GetNetworkCredential().Password -ceq 'synthetic') 'Incorrect saved credential.'
         if ($script:mountFails) { throw 'Synthetic mount failure' }
+        foreach ($mount in $Settings.Mounts) { Save-MountedDrive $mount.Drive (Get-MountPath $Settings $mount) }
         $script:mountCalls++
     }
     try {
@@ -179,12 +245,20 @@ try {
         Set-Answers @()
         Mount-SteamDeck
         Assert-True ($script:prompts.Count -eq 0 -and $script:mountCalls -eq 2) 'Saved runs must mount with no prompts.'
+        $saved = [IO.File]::ReadAllText($script:settingsFile)
+        Unmount-SteamDeck
+        Assert-True ([IO.File]::ReadAllText($script:settingsFile) -ceq $saved) 'Unmount must preserve saved connection settings and password.'
         Set-Answers @('', '', '', '', '', '', 'synthetic', 'n')
         Mount-SteamDeck -Configure
         Assert-True (-not (Test-Path -LiteralPath $script:settingsFile)) 'Reconfiguring without saving must forget previous data.'
         Set-Answers @('', '', '', '', '', '', 'synthetic', 'n')
         Mount-SteamDeck
-        Assert-True (-not (Test-Path -LiteralPath $script:settingsFile)) 'No must not create a file.'
+        Assert-True (-not (Test-Path -LiteralPath $script:settingsFile)) 'No must not save connection credentials.'
+        $recordPath = Get-MountRecordPath
+        Assert-True (((Import-MountRecord).Mounts.Drive -join ',') -eq 'S') 'Declining saved settings must still record the mount location.'
+        $recordText = [IO.File]::ReadAllText($recordPath)
+        Assert-True (-not $recordText.Contains('synthetic') -and -not $recordText.Contains('Credential') -and -not $recordText.Contains('Password')) 'The mount record must contain no credential.'
+        Unmount-SteamDeck
         Set-Answers @('', '', '', '', '', '', 'synthetic', '')
         $script:mountFails = $true
         Assert-Throws { Mount-SteamDeck }
@@ -193,6 +267,8 @@ try {
         Assert-Throws { Mount-SteamDeck }
     } finally {
         if ([IO.File]::Exists($script:settingsFile)) { [IO.File]::Delete($script:settingsFile) }
+        $recordPath = Get-MountRecordPath
+        if ([IO.File]::Exists($recordPath)) { [IO.File]::Delete($recordPath) }
         if ([IO.Directory]::Exists($temporary)) { [IO.Directory]::Delete($temporary) }
     }
 }

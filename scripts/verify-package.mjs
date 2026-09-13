@@ -32,9 +32,11 @@ for (const source of [false, true]) {
     assert.deepEqual(Buffer.from(files[`decky-ssh/${file}`]), await readFile(new URL(file, root)), `Stale or missing file: ${file}`);
   }
   assert.ok(files["decky-ssh/third_party/decky-api/LICENSE"]);
-  const launcher = Buffer.from(files["decky-ssh/mount/mount-windows.cmd"]);
-  const expectedLauncher = (await readFile(new URL("mount/mount-windows.cmd", root), "utf8")).replace(/\r?\n/g, "\r\n");
-  assert.equal(launcher.toString("utf8"), expectedLauncher, "Windows launcher is missing, stale or has incorrect line endings.");
+  for (const name of ["mount-windows.cmd", "unmount-windows.cmd"]) {
+    const launcher = Buffer.from(files[`decky-ssh/mount/${name}`]);
+    const expectedLauncher = (await readFile(new URL(`mount/${name}`, root), "utf8")).replace(/\r?\n/g, "\r\n");
+    assert.equal(launcher.toString("utf8"), expectedLauncher, `${name} is missing, stale or has incorrect line endings.`);
+  }
   console.log(`Verified ${filename}: ${Object.keys(files).length} files`);
 }
 
@@ -45,7 +47,7 @@ for (const platform of ["windows", "linux", "macos"]) {
   assert.ok(checksums.split("\n").includes(`${digest}  ${filename}`), `Checksum mismatch: ${filename}`);
   const files = unzipSync(bytes);
   const scripts = platform === "windows"
-    ? ["mount-windows.cmd", "mount-windows.ps1"]
+    ? ["mount-windows.cmd", "unmount-windows.cmd", "mount-windows.ps1"]
     : [`mount-${platform}.sh`, "mount-unix.sh"];
   assert.deepEqual(Object.keys(files).sort(), ["LICENSE", "README.txt", ...scripts].sort(), `Unexpected files in ${filename}`);
   for (const script of scripts) {
@@ -58,5 +60,6 @@ for (const platform of ["windows", "linux", "macos"]) {
   const readme = strFromU8(files["README.txt"]);
   assert.ok(readme.includes(`Version: ${version}\n`), `Missing version in ${filename}`);
   assert.ok(readme.includes(scripts[0]), `Missing launch instructions in ${filename}`);
+  if (platform === "windows") assert.ok(readme.includes("unmount-windows.cmd"), "Missing unmount instructions.");
   console.log(`Verified ${filename}: ${Object.keys(files).length} files, ${bytes.length} bytes`);
 }

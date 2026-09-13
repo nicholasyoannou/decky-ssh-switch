@@ -93,22 +93,25 @@ class WindowsMountTests(unittest.TestCase):
     def test_double_click_launcher_handles_spaces_and_preserves_exit_codes(self):
         with tempfile.TemporaryDirectory(prefix="ssh switch & (launcher) ! ") as temporary:
             folder = Path(temporary)
-            launcher = folder / "mount-windows.cmd"
-            launcher.write_bytes((ROOT / "mount/mount-windows.cmd").read_bytes())
             log = folder / "launched.txt"
             environment = {**os.environ, "SSH_SWITCH_LAUNCHER_LOG": str(log)}
-            for code in (0, 37):
-                with self.subTest(code=code):
-                    (folder / "mount-windows.ps1").write_text(
-                        "param([switch] $Configure)\n"
-                        "if (-not $Configure) { exit 99 }\n"
-                        "[IO.File]::WriteAllText($env:SSH_SWITCH_LAUNCHER_LOG, $PSScriptRoot)\n"
-                        f"exit {code}\n", encoding="utf-8")
-                    result = subprocess.run([os.environ["COMSPEC"], "/d", "/c", "mount-windows.cmd", "-Configure"],
-                                            cwd=folder, env=environment, input="\n", capture_output=True, text=True, timeout=20)
-                    self.assertEqual(result.returncode, code, result.stdout + result.stderr)
-                    self.assertEqual(log.read_text(), str(folder))
-                    self.assertEqual("Press any key to close." in result.stdout, code != 0)
+            for name, parameter, arguments in (("mount-windows.cmd", "Configure", ["-Configure"]), ("unmount-windows.cmd", "Unmount", [])):
+                (folder / name).write_bytes((ROOT / "mount" / name).read_bytes())
+                for code in (0, 37):
+                    with self.subTest(launcher=name, code=code):
+                        self.check_launcher(folder, name, parameter, arguments, code, log, environment)
+
+    def check_launcher(self, folder, name, parameter, arguments, code, log, environment):
+        (folder / "mount-windows.ps1").write_text(
+            f"param([switch] ${parameter})\n"
+            f"if (-not ${parameter}) {{ exit 99 }}\n"
+            "[IO.File]::WriteAllText($env:SSH_SWITCH_LAUNCHER_LOG, $PSScriptRoot)\n"
+            f"exit {code}\n", encoding="utf-8")
+        result = subprocess.run([os.environ["COMSPEC"], "/d", "/c", name, *arguments],
+                                cwd=folder, env=environment, input="\n", capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, code, result.stdout + result.stderr)
+        self.assertEqual(log.read_text(), str(folder))
+        self.assertEqual("Press any key to close." in result.stdout, code != 0)
 
     def test_powershell_setup_persistence_and_encrypted_settings(self):
         for shell in ("powershell", "pwsh"):

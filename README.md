@@ -48,7 +48,9 @@ On Windows, the address defaults to `steamdeck` and setup creates one persistent
 
 **Save settings and password** defaults to **Yes**. Windows stores a data file at `%LOCALAPPDATA%\SSH Switch\mount-windows.xml`, with the password encrypted for your Windows account on that PC. Later runs reuse it without setup prompts. Run `mount-windows.cmd -Configure` to change settings, or delete the data file to forget them.
 
-Windows drives remain mounted after closing the script. Right-click a drive in File Explorer and choose **Disconnect** to remove it. Windows uses SSHFS-Win's standard network-drive provider, which does not verify the Deck's SSH fingerprint.
+Windows drives remain mounted after closing the script. Double-click **`unmount-windows.cmd`** to disconnect the drives recorded by the mount helper. Their locations are saved in `%LOCALAPPDATA%\SSH Switch\mounted-windows.xml` even if you decline to save your password. Unmounting keeps saved connection settings for next time and leaves unrelated drives alone. Close files using a drive if Windows reports it is busy.
+
+Windows uses SSHFS-Win's standard network-drive provider, which does not verify the Deck's SSH fingerprint.
 
 On Linux and macOS, enter the connection details and local folder, compare the SSH fingerprint when prompted, then enter your Deck password. The script prints the command to unmount when finished.
 

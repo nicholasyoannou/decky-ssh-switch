@@ -6,7 +6,7 @@ const root = new URL("../", import.meta.url);
 const metadata = JSON.parse(await readFile(new URL("package.json", root), "utf8"));
 // Explicit allowlists keep neighbouring backups, credentials and node_modules out.
 const documentationFiles = ["README.md", "assets/logo.png", "assets/screenshots/ssh-controls.png", "assets/screenshots/password-form.png"];
-const mountFiles = ["mount/mount-windows.cmd", "mount/mount-windows.ps1", "mount/mount-linux.sh", "mount/mount-macos.sh", "mount/mount-unix.sh"];
+const mountFiles = ["mount/mount-windows.cmd", "mount/unmount-windows.cmd", "mount/mount-windows.ps1", "mount/mount-linux.sh", "mount/mount-macos.sh", "mount/mount-unix.sh"];
 const runtimeFiles = ["plugin.json", "package.json", "main.py", "dist/index.js", ...documentationFiles, ...mountFiles, "LICENSE", "THIRD_PARTY_NOTICES.md"];
 const sourceFiles = ["plugin.json", "package.json", "package-lock.json", "main.py", ...documentationFiles, ...mountFiles, "LICENSE", "THIRD_PARTY_NOTICES.md", ".gitignore", ".gitattributes", ".editorconfig", ".github/workflows/build-release.yml", "rollup.config.js", "tsconfig.json", "src/index.tsx", "tests/test_backend.py", "tests/test_connection.py", "tests/test_mount.py", "tests/test_mount_windows.ps1", "tests/test_release.py", "scripts/package.mjs", "scripts/clean.mjs", "scripts/check-version.mjs", "scripts/verify-package.mjs", "scripts/release.sh"];
 const apiFiles = ["LICENSE", "README.md", "package.json", "src/index.ts", "src/types.ts", "src/types.d.ts", "dist/index.js", "dist/index.d.ts", "dist/types.d.ts"];
@@ -29,12 +29,12 @@ async function archive(files) {
 async function mountArchive(platform) {
   const entries = {};
   const files = platform === "windows"
-    ? ["mount-windows.cmd", "mount-windows.ps1"]
+    ? ["mount-windows.cmd", "unmount-windows.cmd", "mount-windows.ps1"]
     : [`mount-${platform}.sh`, "mount-unix.sh"];
   for (const file of files) await addFile(entries, file, `mount/${file}`);
   await addFile(entries, "LICENSE", "LICENSE");
   const instructions = {
-    windows: "Double-click mount-windows.cmd. Keep mount-windows.ps1 beside it.\nMissing SSHFS-Win and WinFsp dependencies are installed automatically.\n\nSaved settings are reused on later runs. To change them, run:\nmount-windows.cmd -Configure\n",
+    windows: "Double-click mount-windows.cmd to mount, or unmount-windows.cmd to disconnect.\nKeep both launchers beside mount-windows.ps1.\nMissing SSHFS-Win and WinFsp dependencies are installed automatically when mounting.\n\nMount locations are recorded even if you choose not to save your password.\nUnmounting keeps saved settings for the next connection. To change them, run:\nmount-windows.cmd -Configure\n",
     linux: "Install sshfs with your package manager (Ubuntu/Debian: sudo apt install sshfs).\nIn this extracted folder, run as your normal user:\nbash mount-linux.sh\n",
     macos: "Install FUSE-T and SSHFS with Homebrew:\nbrew install macos-fuse-t/homebrew-cask/fuse-t macos-fuse-t/homebrew-cask/sshfs-fuse-t\n\nIn this extracted folder, run as your normal user:\nbash mount-macos.sh\n",
   };
