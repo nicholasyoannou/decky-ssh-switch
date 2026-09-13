@@ -31,5 +31,8 @@ for (const source of [false, true]) {
     assert.deepEqual(Buffer.from(files[`decky-ssh/${file}`]), await readFile(new URL(file, root)), `Stale or missing file: ${file}`);
   }
   assert.ok(files["decky-ssh/third_party/decky-api/LICENSE"]);
+  const launcher = Buffer.from(files["decky-ssh/mount/mount-windows.cmd"]);
+  const expectedLauncher = (await readFile(new URL("mount/mount-windows.cmd", root), "utf8")).replace(/\r?\n/g, "\r\n");
+  assert.equal(launcher.toString("utf8"), expectedLauncher, "Windows launcher is missing, stale or has incorrect line endings.");
   console.log(`Verified ${filename}: ${Object.keys(files).length} files`);
 }

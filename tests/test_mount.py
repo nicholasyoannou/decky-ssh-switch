@@ -90,6 +90,24 @@ else:
 
 @unittest.skipUnless(os.name == "nt", "Requires native Windows process argument parsing")
 class WindowsMountTests(unittest.TestCase):
+    def test_double_click_launcher_handles_spaces_and_preserves_exit_codes(self):
+        with tempfile.TemporaryDirectory(prefix="ssh switch & (launcher) ! ") as temporary:
+            folder = Path(temporary)
+            launcher = folder / "mount-windows.cmd"
+            launcher.write_bytes((ROOT / "mount/mount-windows.cmd").read_bytes())
+            log = folder / "launched.txt"
+            environment = {**os.environ, "SSH_SWITCH_LAUNCHER_LOG": str(log)}
+            for code in (0, 37):
+                with self.subTest(code=code):
+                    (folder / "mount-windows.ps1").write_text(
+                        "[IO.File]::WriteAllText($env:SSH_SWITCH_LAUNCHER_LOG, $PSScriptRoot)\n"
+                        f"exit {code}\n", encoding="utf-8")
+                    result = subprocess.run([os.environ["COMSPEC"], "/d", "/c", "mount-windows.cmd"],
+                                            cwd=folder, env=environment, input="\n", capture_output=True, text=True, timeout=20)
+                    self.assertEqual(result.returncode, code, result.stdout + result.stderr)
+                    self.assertEqual(log.read_text(), str(folder))
+                    self.assertEqual("Press any key to close." in result.stdout, code != 0)
+
     def test_powershell_validation_quoting_and_host_verification(self):
         for shell in ("powershell", "pwsh"):
             if not shutil.which(shell):

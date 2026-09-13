@@ -44,4 +44,46 @@ try {
     Assert-True ($actual.Count -eq $values.Count) 'Argument count changed.'
     for ($i = 0; $i -lt $values.Count; $i++) { Assert-True ($actual[$i] -ceq $values[$i]) "Argument $i changed." }
 } finally { $child.Dispose() }
+
+# No packages are installed by these tests. Exercise setup decisions, including
+# rechecking an installer's success instead of trusting only its exit code.
+$script:installs = New-Object 'Collections.Generic.List[string]'
+function Reset-Dependencies([bool] $Fsp, [bool] $Sshfs, [int] $ExitCode = 0, [bool] $NoEffect = $false) {
+    $script:hasFsp = $Fsp
+    $script:hasSshfs = $Sshfs
+    $script:installerExitCode = $ExitCode
+    $script:installerNoEffect = $NoEffect
+    $script:installs.Clear()
+}
+function Test-WinFspInstalled { return $script:hasFsp }
+function Find-Sshfs { if ($script:hasSshfs) { return 'C:\Program Files\SSHFS-Win\bin\sshfs.exe' }; return $null }
+function Invoke-DependencyInstall([string] $Id) {
+    $script:installs.Add($Id)
+    if ($script:installerExitCode -eq 0 -and -not $script:installerNoEffect) {
+        if ($Id -eq 'WinFsp.WinFsp') { $script:hasFsp = $true } else { $script:hasSshfs = $true }
+    }
+    return $script:installerExitCode
+}
+Reset-Dependencies $false $false
+$result = Initialize-MountDependencies
+Assert-True ($result -ceq 'C:\Program Files\SSHFS-Win\bin\sshfs.exe') 'Setup did not return the installed program.'
+Assert-True (($script:installs -join ',') -ceq 'WinFsp.WinFsp,SSHFS-Win.SSHFS-Win') 'Dependencies must install in order.'
+Reset-Dependencies $true $true
+$null = Initialize-MountDependencies
+Assert-True ($script:installs.Count -eq 0) 'Already installed dependencies must not be changed.'
+Reset-Dependencies $true $false
+$null = Initialize-MountDependencies
+Assert-True (($script:installs -join ',') -ceq 'SSHFS-Win.SSHFS-Win') 'Only SSHFS-Win should be installed.'
+Reset-Dependencies $false $true
+$null = Initialize-MountDependencies
+Assert-True (($script:installs -join ',') -ceq 'WinFsp.WinFsp') 'Only WinFsp should be installed.'
+Reset-Dependencies $false $false 5
+Assert-Throws { Initialize-MountDependencies }
+Assert-True ($script:installs.Count -eq 1) 'A failed driver install must stop setup.'
+Reset-Dependencies $false $false 0 $true
+Assert-Throws { Initialize-MountDependencies }
+Assert-True ($script:installs.Count -eq 1) 'A missing driver must stop setup even after exit code zero.'
+Reset-Dependencies $true $false 0 $true
+Assert-Throws { Initialize-MountDependencies }
+
 Write-Host 'Windows mount checks passed.'

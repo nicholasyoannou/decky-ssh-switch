@@ -59,18 +59,71 @@ function Get-ScannedKey([string[]] $Lines) {
 }
 
 function Find-Sshfs {
-    foreach ($base in @($env:ProgramFiles, ${env:ProgramFiles(x86)})) {
+    foreach ($base in @($env:ProgramW6432, $env:ProgramFiles, ${env:ProgramFiles(x86)})) {
         if ($base) {
             $candidate = Join-Path $base 'SSHFS-Win\bin\sshfs.exe'
-            if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
+            if ((Test-Path -LiteralPath $candidate -PathType Leaf) -and
+                (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $candidate) 'ssh.exe') -PathType Leaf)) { return $candidate }
         }
     }
-    throw 'Install SSHFS-Win and WinFsp, then rerun: winget install --id SSHFS-Win.SSHFS-Win --exact --source winget'
+    return $null
+}
+
+function Test-WinFspInstalled {
+    $library = if ([Environment]::Is64BitOperatingSystem) { 'bin\winfsp-x64.dll' } else { 'bin\winfsp-x86.dll' }
+    foreach ($key in @('HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\WinFsp', 'HKEY_LOCAL_MACHINE\SOFTWARE\WinFsp')) {
+        $directory = [Microsoft.Win32.Registry]::GetValue($key, 'InstallDir', $null)
+        if ($directory -and (Test-Path -LiteralPath (Join-Path $directory $library) -PathType Leaf)) { return $true }
+    }
+    return $false
+}
+
+function Invoke-DependencyInstall([ValidateSet('WinFsp.WinFsp', 'SSHFS-Win.SSHFS-Win')][string] $Id) {
+    $winget = Get-Command winget.exe -CommandType Application -ErrorAction SilentlyContinue
+    if (-not $winget) { throw 'WinGet is missing. Install Microsoft App Installer from the Microsoft Store, then reopen mount-windows.cmd.' }
+    Write-Host "Installing $Id... Approve the Windows administrator prompt if it appears."
+    $start = New-Object Diagnostics.ProcessStartInfo
+    $start.FileName = $winget.Source
+    $start.Arguments = (@('install', '--id', $Id, '--exact', '--source', 'winget',
+        '--silent', '--no-upgrade', '--accept-package-agreements', '--accept-source-agreements',
+        '--disable-interactivity') | ForEach-Object { ConvertTo-NativeArgument $_ }) -join ' '
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    # WinGet handles installer elevation; the mount stays in the normal user's
+    # session so its drive is visible in File Explorer. Never request a reboot.
+    $process = [Diagnostics.Process]::Start($start)
+    try {
+        $output = $process.StandardOutput.ReadToEndAsync()
+        $errors = $process.StandardError.ReadToEndAsync()
+        $process.WaitForExit()
+        [Console]::Write($output.GetAwaiter().GetResult())
+        [Console]::Error.Write($errors.GetAwaiter().GetResult())
+        return $process.ExitCode
+    }
+    finally { $process.Dispose() }
+}
+
+function Initialize-MountDependencies {
+    if (-not (Test-WinFspInstalled)) {
+        $code = Invoke-DependencyInstall 'WinFsp.WinFsp'
+        if ($code -ne 0) { throw "WinFsp setup did not complete (WinGet exit code $code). Follow the installer message above, then reopen mount-windows.cmd." }
+        if (-not (Test-WinFspInstalled)) { throw 'WinFsp is still unavailable. Restart Windows if the installer requested it, then reopen mount-windows.cmd.' }
+    }
+    $sshfs = Find-Sshfs
+    if (-not $sshfs) {
+        $code = Invoke-DependencyInstall 'SSHFS-Win.SSHFS-Win'
+        if ($code -ne 0) { throw "SSHFS-Win setup did not complete (WinGet exit code $code). Follow the installer message above, then reopen mount-windows.cmd." }
+        $sshfs = Find-Sshfs
+        if (-not $sshfs) { throw 'SSHFS-Win is still unavailable. Repair its installation in Windows Settings, then reopen mount-windows.cmd.' }
+    }
+    return $sshfs
 }
 
 function Mount-SteamDeck {
     if ($env:OS -ne 'Windows_NT') { throw 'Use mount-linux.sh or mount-macos.sh on this computer.' }
-    $sshfs = Find-Sshfs
+    $sshfs = Initialize-MountDependencies
     $ssh = Join-Path (Split-Path -Parent $sshfs) 'ssh.exe'
     if (-not (Test-Path -LiteralPath $ssh -PathType Leaf)) { throw 'Reinstall SSHFS-Win: its bundled SSH client is missing.' }
 
@@ -182,5 +235,5 @@ function Mount-SteamDeck {
 
 if ($MyInvocation.InvocationName -ne '.') {
     try { Mount-SteamDeck }
-    catch { Write-Error $_ -ErrorAction Continue; exit 1 }
+    catch { [Console]::Error.WriteLine('SSH Switch: ' + $_.Exception.Message); exit 1 }
 }

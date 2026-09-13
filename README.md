@@ -32,17 +32,17 @@ For a manual install, extract the ZIP in Desktop Mode. Copy the extracted `decky
 
 Enable SSH and open **Connect from computer** on the Deck. Keep both devices on the same network.
 
-Install the dependency for your computer:
+Extract a release ZIP on your computer.
 
-- **Windows:** [SSHFS-Win and WinFsp](https://github.com/winfsp/sshfs-win), using `winget install --id SSHFS-Win.SSHFS-Win --exact --source winget`.
+- **Windows:** double-click `mount-windows.cmd` in the `mount` folder. It starts PowerShell and automatically installs missing [SSHFS-Win and WinFsp](https://github.com/winfsp/sshfs-win) dependencies through WinGet. Approve the Windows administrator prompt if shown.
 - **Linux:** SSHFS from your package manager, e.g. `sudo apt install sshfs` on Ubuntu/Debian.
 - **macOS:** [FUSE-T and SSHFS](https://github.com/macos-fuse-t/fuse-t#installing-from-brew), using `brew install macos-fuse-t/homebrew-cask/fuse-t macos-fuse-t/homebrew-cask/sshfs-fuse-t`.
 
-Extract a release ZIP on your computer, open a terminal in its `decky-ssh` folder, and run:
+Or run from a terminal in the extracted `decky-ssh` folder:
 
 | Computer | Command |
 | --- | --- |
-| Windows (PowerShell) | `powershell -NoProfile -ExecutionPolicy Bypass -File .\mount\mount-windows.ps1` |
+| Windows | `.\mount\mount-windows.cmd` |
 | Linux | `bash mount/mount-linux.sh` |
 | macOS | `bash mount/mount-macos.sh` |
 
@@ -68,14 +68,14 @@ Release ZIPs are written to `release/`. Run `npm run clean` to remove generated 
 Publish the contents of this `decky-ssh` directory as the repository root. The workflow is `.github/workflows/build-release.yml`.
 
 - Every branch push and pull request runs the tests, type-checks, builds and verifies both ZIPs. The archives and checksums are available as workflow artifacts for 14 days.
-- Pushing a version tag such as `v0.2.0` runs the same checks, then creates a GitHub Release containing the installable ZIP, source ZIP and `SHA256SUMS`. The tag must match `package.json` and `package-lock.json`.
+- Pushing a version tag such as `v0.2.1` runs the same checks, then creates a GitHub Release containing the installable ZIP, source ZIP and `SHA256SUMS`. The tag must match `package.json` and `package-lock.json`.
 - Tags such as `v0.2.0-beta.1` produce prereleases. The workflow can also be run manually; selecting a version tag enables publishing, while selecting a branch only builds artifacts.
 
 After committing and pushing this project to GitHub, publish the current version with:
 
 ```sh
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.2.1
+git push origin v0.2.1
 ```
 
 For subsequent releases, run `npm version patch` (or `minor` / `major`) in a clean Git checkout, then push the commit and generated tag with `git push origin HEAD --follow-tags`.
