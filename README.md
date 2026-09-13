@@ -13,13 +13,9 @@ A small Decky Loader plugin for Steam Deck:
 ## Screenshots
 
 <p align="center">
-  <img src="assets/screenshots/ssh-controls.png" alt="SSH Switch on Steam Deck, showing SSH enabled and Start at boot" width="300">
+  <a href="assets/screenshots/ssh-controls.png"><img src="assets/screenshots/ssh-controls.png" alt="SSH Switch on Steam Deck, showing SSH enabled and Start at boot" width="32%" align="top"></a>
+  <a href="assets/screenshots/password-form.png"><img src="assets/screenshots/password-form.png" alt="SSH Switch password dialog on Steam Deck with masked example text and Save and Cancel buttons" width="66%" align="top"></a>
 </p>
-<p align="center">
-  <img src="assets/screenshots/password-form.png" alt="SSH Switch password dialog on Steam Deck with masked example text and Save and Cancel buttons" width="680">
-</p>
-
-Captured on a Steam Deck in Steam's Big Picture interface.
 
 ## Install
 
@@ -33,7 +29,7 @@ For a manual install, extract the ZIP in Desktop Mode. Copy the extracted `decky
 
 ## Build and test
 
-Node.js 20+ and Python 3.10+ are required for development. The installed plugin uses Decky's Python and has no third-party Python dependencies.
+Requires Node.js 20+ and Python 3.10+.
 
 ```sh
 npm ci
@@ -42,12 +38,7 @@ npm run package
 npm run verify-package
 ```
 
-`npm run package` removes previous build output, type-checks the frontend, builds `dist/index.js`, and creates `release/ssh-switch-<version>.zip`, `release/ssh-switch-<version>-source.zip`, and `release/SHA256SUMS`. Each archive has a single `decky-ssh/` directory and includes the bundled Decky API's source and license. The source archive also includes the dependency lockfile, tests, build scripts and GitHub Actions workflow. See `THIRD_PARTY_NOTICES.md` for library details.
-
-Generated ZIPs, `dist/`, `release/`, `node_modules/`, Python caches and local environment files are ignored by Git. Packaging keeps only the current version's two ZIPs and checksums. Run `npm run clean` to remove generated builds, releases and Python caches when finished; installed development dependencies stay in `node_modules/`.
-
-The test suite covers backend controls, real Linux password hashing, and simulated GitHub release publishing. Tests never operate on real services or accounts, and release tests use a local fake GitHub CLI. Linux-only checks are skipped on Windows.
-
+Release ZIPs are written to `release/`. Run `npm run clean` to remove generated files.
 
 ## CI/CD and releases
 
@@ -65,8 +56,6 @@ git push origin v0.1.5
 ```
 
 For subsequent releases, run `npm version patch` (or `minor` / `major`) in a clean Git checkout, then push the commit and generated tag with `git push origin HEAD --follow-tags`.
-
-The workflow uses GitHub's automatic `GITHUB_TOKEN`; no personal token is needed. Only the release job gets `contents: write`. It uploads assets to a draft before publishing, supports resuming an interrupted draft, and leaves already-published releases intact. Never move a published version tag; bump the version for changed builds.
 
 ## Development references
 
