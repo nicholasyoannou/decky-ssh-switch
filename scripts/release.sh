@@ -11,7 +11,14 @@ if [[ "$RELEASE_TAG" != "v$RELEASE_VERSION" ]]; then
   exit 1
 fi
 
-assets=("release/ssh-switch-$RELEASE_VERSION.zip" "release/ssh-switch-$RELEASE_VERSION-source.zip" "release/SHA256SUMS")
+assets=(
+  "release/ssh-switch-$RELEASE_VERSION.zip"
+  "release/ssh-switch-$RELEASE_VERSION-source.zip"
+  "release/ssh-switch-mount-windows.zip"
+  "release/ssh-switch-mount-linux.zip"
+  "release/ssh-switch-mount-macos.zip"
+  "release/SHA256SUMS"
+)
 for asset in "${assets[@]}"; do
   if [[ ! -f "$asset" ]]; then
     printf 'Missing release asset: %s\n' "$asset" >&2

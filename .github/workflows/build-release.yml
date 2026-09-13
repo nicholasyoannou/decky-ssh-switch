@@ -37,7 +37,7 @@ jobs:
       - run: npm ci --ignore-scripts
       - name: Test backend, mounting scripts and release publishing
         run: npm test
-      - name: Build plugin and source archives
+      - name: Build plugin, source and mounting helper archives
         run: npm run package
       - name: Verify packaged files and checksums
         run: npm run verify-package

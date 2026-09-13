@@ -7,6 +7,7 @@ const root = new URL("../", import.meta.url);
 const { version } = JSON.parse(await readFile(new URL("package.json", root), "utf8"));
 assert.deepEqual((await readdir(new URL("release/", root))).sort(), [
   "SHA256SUMS", `ssh-switch-${version}-source.zip`, `ssh-switch-${version}.zip`,
+  "ssh-switch-mount-windows.zip", "ssh-switch-mount-linux.zip", "ssh-switch-mount-macos.zip",
 ].sort(), "The release directory contains stale or unexpected files. Run npm run package.");
 const checksums = await readFile(new URL("release/SHA256SUMS", root), "utf8");
 for (const source of [false, true]) {
@@ -35,4 +36,27 @@ for (const source of [false, true]) {
   const expectedLauncher = (await readFile(new URL("mount/mount-windows.cmd", root), "utf8")).replace(/\r?\n/g, "\r\n");
   assert.equal(launcher.toString("utf8"), expectedLauncher, "Windows launcher is missing, stale or has incorrect line endings.");
   console.log(`Verified ${filename}: ${Object.keys(files).length} files`);
+}
+
+for (const platform of ["windows", "linux", "macos"]) {
+  const filename = `ssh-switch-mount-${platform}.zip`;
+  const bytes = await readFile(new URL(`release/${filename}`, root));
+  const digest = createHash("sha256").update(bytes).digest("hex");
+  assert.ok(checksums.split("\n").includes(`${digest}  ${filename}`), `Checksum mismatch: ${filename}`);
+  const files = unzipSync(bytes);
+  const scripts = platform === "windows"
+    ? ["mount-windows.cmd", "mount-windows.ps1"]
+    : [`mount-${platform}.sh`, "mount-unix.sh"];
+  assert.deepEqual(Object.keys(files).sort(), ["LICENSE", "README.txt", ...scripts].sort(), `Unexpected files in ${filename}`);
+  for (const script of scripts) {
+    let expected = await readFile(new URL(`mount/${script}`, root));
+    if (script.endsWith(".cmd")) expected = Buffer.from(expected.toString("utf8").replace(/\r?\n/g, "\r\n"));
+    assert.deepEqual(Buffer.from(files[script]), expected, `Stale or missing file in ${filename}: ${script}`);
+    if (script.endsWith(".sh")) assert.ok(!files[script].includes(13), `Shell script must use LF: ${script}`);
+  }
+  assert.deepEqual(Buffer.from(files.LICENSE), await readFile(new URL("LICENSE", root)));
+  const readme = strFromU8(files["README.txt"]);
+  assert.ok(readme.includes(`Version: ${version}\n`), `Missing version in ${filename}`);
+  assert.ok(readme.includes(scripts[0]), `Missing launch instructions in ${filename}`);
+  console.log(`Verified ${filename}: ${Object.keys(files).length} files, ${bytes.length} bytes`);
 }

@@ -32,19 +32,17 @@ For a manual install, extract the ZIP in Desktop Mode. Copy the extracted `decky
 
 Enable SSH and open **Connect from computer** on the Deck. Keep both devices on the same network.
 
-Extract a release ZIP on your computer.
+Download the helper for your computer and extract all files:
 
-- **Windows:** double-click `mount-windows.cmd` in the `mount` folder. It starts PowerShell and automatically installs missing [SSHFS-Win and WinFsp](https://github.com/winfsp/sshfs-win) dependencies through WinGet. Approve the Windows administrator prompt if shown.
+| Download | After extracting |
+| --- | --- |
+| **[Windows](https://github.com/nicholasyoannou/decky-ssh-switch/releases/latest/download/ssh-switch-mount-windows.zip)** | Double-click `mount-windows.cmd` |
+| **[Linux](https://github.com/nicholasyoannou/decky-ssh-switch/releases/latest/download/ssh-switch-mount-linux.zip)** | Run `bash mount-linux.sh` in the extracted folder |
+| **[macOS](https://github.com/nicholasyoannou/decky-ssh-switch/releases/latest/download/ssh-switch-mount-macos.zip)** | Run `bash mount-macos.sh` in the extracted folder |
+
+- **Windows:** the launcher starts PowerShell and automatically installs missing [SSHFS-Win and WinFsp](https://github.com/winfsp/sshfs-win) dependencies through WinGet. Approve the Windows administrator prompt if shown. Keep the `.cmd` and `.ps1` files together.
 - **Linux:** SSHFS from your package manager, e.g. `sudo apt install sshfs` on Ubuntu/Debian.
 - **macOS:** [FUSE-T and SSHFS](https://github.com/macos-fuse-t/fuse-t#installing-from-brew), using `brew install macos-fuse-t/homebrew-cask/fuse-t macos-fuse-t/homebrew-cask/sshfs-fuse-t`.
-
-Or run from a terminal in the extracted `decky-ssh` folder:
-
-| Computer | Command |
-| --- | --- |
-| Windows | `.\mount\mount-windows.cmd` |
-| Linux | `bash mount/mount-linux.sh` |
-| macOS | `bash mount/mount-macos.sh` |
 
 On Windows, the address defaults to `steamdeck` and setup creates one persistent drive (default `S:`). Separate Home, SD card and Root drives are optional and default to **No**. Use the address and folder paths shown on the Deck if the defaults differ.
 
@@ -71,8 +69,8 @@ Release ZIPs are written to `release/`. Run `npm run clean` to remove generated 
 
 Publish the contents of this `decky-ssh` directory as the repository root. The workflow is `.github/workflows/build-release.yml`.
 
-- Every branch push and pull request runs the tests, type-checks, builds and verifies both ZIPs. The archives and checksums are available as workflow artifacts for 14 days.
-- Pushing a version tag such as `v0.2.1` runs the same checks, then creates a GitHub Release containing the installable ZIP, source ZIP and `SHA256SUMS`. The tag must match `package.json` and `package-lock.json`.
+- Every branch push and pull request runs the tests, type-checks, builds and verifies all ZIPs. The archives and checksums are available as workflow artifacts for 14 days.
+- Pushing a version tag such as `v0.2.1` runs the same checks, then creates a GitHub Release containing the plugin, source and three mounting helper ZIPs, plus `SHA256SUMS`. The tag must match `package.json` and `package-lock.json`.
 - Tags such as `v0.2.0-beta.1` produce prereleases. The workflow can also be run manually; selecting a version tag enables publishing, while selecting a branch only builds artifacts.
 
 After committing and pushing this project to GitHub, publish the current version with:

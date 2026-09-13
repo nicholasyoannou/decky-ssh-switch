@@ -14,12 +14,18 @@ SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "release.sh"
 
 @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "Release job runs on Linux")
 class ReleaseTests(unittest.TestCase):
-    def run_release(self, scenario="new", version="0.1.1", tag=None, missing_asset=False):
+    @staticmethod
+    def asset_names(version="0.1.1"):
+        return (f"ssh-switch-{version}.zip", f"ssh-switch-{version}-source.zip",
+                "ssh-switch-mount-windows.zip", "ssh-switch-mount-linux.zip",
+                "ssh-switch-mount-macos.zip", "SHA256SUMS")
+
+    def run_release(self, scenario="new", version="0.1.1", tag=None, missing_asset=None):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             (root / "release").mkdir()
-            if not missing_asset:
-                for name in (f"ssh-switch-{version}.zip", f"ssh-switch-{version}-source.zip", "SHA256SUMS"):
+            for name in self.asset_names(version):
+                if name != missing_asset:
                     (root / "release" / name).write_text("synthetic asset")
             fake = root / "gh"
             fake.write_text("""#!/usr/bin/env python3
@@ -46,15 +52,15 @@ if command == 'upload' and scenario == 'upload_failure': sys.exit(1)
         self.assertEqual([call[1] for call in calls], ["view", "create", "upload", "edit"])
         self.assertIn("--draft", calls[1])
         self.assertIn("--verify-tag", calls[1])
-        self.assertIn("release/ssh-switch-0.1.1.zip", calls[2])
-        self.assertIn("release/ssh-switch-0.1.1-source.zip", calls[2])
-        self.assertIn("release/SHA256SUMS", calls[2])
+        uploaded = [arg for arg in calls[2] if arg.startswith("release/")]
+        self.assertEqual(uploaded, [f"release/{name}" for name in self.asset_names()])
         self.assertIn("--draft=false", calls[3])
 
     def test_existing_draft_can_be_resumed(self):
         result, calls = self.run_release("draft")
         self.assertEqual(result.returncode, 0)
         self.assertEqual([call[1] for call in calls], ["view", "upload", "edit"])
+        self.assertIn("release/ssh-switch-mount-windows.zip", calls[1])
 
     def test_published_release_is_not_overwritten(self):
         result, calls = self.run_release("published")
@@ -72,9 +78,11 @@ if command == 'upload' and scenario == 'upload_failure': sys.exit(1)
         self.assertEqual(calls, [])
 
     def test_missing_asset_makes_no_github_calls(self):
-        result, calls = self.run_release(missing_asset=True)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(calls, [])
+        for name in self.asset_names():
+            with self.subTest(asset=name):
+                result, calls = self.run_release(missing_asset=name)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(calls, [])
 
     def test_prerelease_is_not_marked_latest(self):
         result, calls = self.run_release(version="0.2.0-beta.1")
