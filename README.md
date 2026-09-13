@@ -9,6 +9,7 @@ A small Decky Loader plugin for Steam Deck:
 - **SSH enabled** starts or stops SSH now.
 - **Start at boot** enables or disables SSH at system startup, independently of whether it is running now.
 - **Set password** opens a dialog to change the user's Linux account password (normally `deck`).
+- **Connect from computer** shows connection details for mounting the Deck's files on Windows, Linux or macOS.
 
 ## Screenshots
 
@@ -26,6 +27,28 @@ Install `ssh-switch-<version>.zip` from the repository's **Releases** page. The 
 Copy the release ZIP to the Deck. Enable Developer Mode in Decky's settings, open its Developer page, and use **Install Plugin from ZIP File** to select it. If your Decky version only offers a ZIP URL, use a directly downloadable URL for the same release archive, or install manually below.
 
 For a manual install, extract the ZIP in Desktop Mode. Copy the extracted `decky-ssh` folder into `~/homebrew/plugins/`, then restart.
+
+## Mount files on your computer
+
+Enable SSH and open **Connect from computer** on the Deck. Keep both devices on the same network.
+
+Install the dependency for your computer:
+
+- **Windows:** [SSHFS-Win and WinFsp](https://github.com/winfsp/sshfs-win), using `winget install --id SSHFS-Win.SSHFS-Win --exact --source winget`.
+- **Linux:** SSHFS from your package manager, e.g. `sudo apt install sshfs` on Ubuntu/Debian.
+- **macOS:** [FUSE-T and SSHFS](https://github.com/macos-fuse-t/fuse-t#installing-from-brew), using `brew install macos-fuse-t/homebrew-cask/fuse-t macos-fuse-t/homebrew-cask/sshfs-fuse-t`.
+
+Extract a release ZIP on your computer, open a terminal in its `decky-ssh` folder, and run:
+
+| Computer | Command |
+| --- | --- |
+| Windows (PowerShell) | `powershell -NoProfile -ExecutionPolicy Bypass -File .\mount\mount-windows.ps1` |
+| Linux | `bash mount/mount-linux.sh` |
+| macOS | `bash mount/mount-macos.sh` |
+
+Enter the address, port, username and remote folder shown on the Deck, then choose a drive letter or local folder. Compare the SSH fingerprint when prompted and enter your Deck password.
+
+On Windows, keep the script open; close files on the drive and press Enter to disconnect. Linux and macOS print the command to unmount when finished.
 
 ## Build and test
 
@@ -45,14 +68,14 @@ Release ZIPs are written to `release/`. Run `npm run clean` to remove generated 
 Publish the contents of this `decky-ssh` directory as the repository root. The workflow is `.github/workflows/build-release.yml`.
 
 - Every branch push and pull request runs the tests, type-checks, builds and verifies both ZIPs. The archives and checksums are available as workflow artifacts for 14 days.
-- Pushing a version tag such as `v0.1.5` runs the same checks, then creates a GitHub Release containing the installable ZIP, source ZIP and `SHA256SUMS`. The tag must match `package.json` and `package-lock.json`.
+- Pushing a version tag such as `v0.2.0` runs the same checks, then creates a GitHub Release containing the installable ZIP, source ZIP and `SHA256SUMS`. The tag must match `package.json` and `package-lock.json`.
 - Tags such as `v0.2.0-beta.1` produce prereleases. The workflow can also be run manually; selecting a version tag enables publishing, while selecting a branch only builds artifacts.
 
 After committing and pushing this project to GitHub, publish the current version with:
 
 ```sh
-git tag v0.1.5
-git push origin v0.1.5
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
 For subsequent releases, run `npm version patch` (or `minor` / `major`) in a clean Git checkout, then push the commit and generated tag with `git push origin HEAD --follow-tags`.

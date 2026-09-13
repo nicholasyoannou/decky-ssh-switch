@@ -1,9 +1,14 @@
 """SteamOS SSH controls. No credentials or preferences are saved by the plugin."""
 
 import asyncio
+import base64
 import ctypes
+import hashlib
+import ipaddress
+import json
 import os
 import re
+import socket
 from pathlib import Path
 
 
@@ -116,6 +121,61 @@ async def _change(action):
         raise RuntimeError(f"Could not {action} SSH. Check 'systemctl status sshd.service' in Desktop Mode, then refresh.")
 
 
+async def _connection_info():
+    import pwd
+
+    username = _account()
+    home = pwd.getpwnam(username).pw_dir
+    code, output, _ = await _run("/usr/bin/sshd", "-T")
+    if code != 0:
+        raise RuntimeError("Could not read the SSH configuration. Enable SSH, then reopen this dialog.")
+    settings = [parts for line in output.splitlines() if len(parts := line.split(None, 1)) == 2]
+    ports = sorted({int(value) for key, value in settings if key == "port"})
+    fingerprint = None
+    for key, value in settings:
+        if key != "hostkey":
+            continue
+        try:
+            # Only public keys are read; private host keys never enter an RPC.
+            fields = Path(value + ".pub").read_text(encoding="ascii").split()
+            if len(fields) >= 2 and fields[0] == "ssh-ed25519":
+                digest = hashlib.sha256(base64.b64decode(fields[1], validate=True)).digest()
+                fingerprint = "SHA256:" + base64.b64encode(digest).decode("ascii").rstrip("=")
+                break
+        except (OSError, ValueError, UnicodeError):
+            continue
+    if not ports or not fingerprint:
+        raise RuntimeError("No SSH port or Ed25519 host key was found. Enable SSH, then reopen this dialog.")
+
+    code, output, _ = await _run("/usr/bin/ip", "-j", "-4", "addr", "show", "scope", "global")
+    if code != 0:
+        raise RuntimeError("Could not read the Deck's network addresses.")
+    addresses = []
+    for interface in json.loads(output):
+        if "UP" not in interface.get("flags", []):
+            continue
+        for entry in interface.get("addr_info", []):
+            address = entry.get("local", "")
+            try:
+                parsed = ipaddress.IPv4Address(address)
+            except ipaddress.AddressValueError:
+                continue
+            if entry.get("scope") == "global" and not parsed.is_loopback and not parsed.is_link_local:
+                addresses.append({"address": address, "interface": interface["ifname"]})
+
+    folders = [{"label": "Home", "path": home}]
+    code, output, _ = await _run("/usr/bin/findmnt", "--json", "--list", "--output", "TARGET")
+    if code == 0:
+        for entry in json.loads(output).get("filesystems", []):
+            target = entry.get("target", "")
+            if target.startswith("/run/media/"):
+                folders.append({"label": "External storage", "path": target})
+    return {
+        "username": username, "hostname": socket.gethostname(), "addresses": addresses,
+        "ports": ports, "folders": folders, "fingerprint": fingerprint,
+    }
+
+
 def _boolean(value):
     if type(value) is not bool:
         raise ValueError("The switch value must be true or false.")
@@ -167,6 +227,10 @@ class Plugin:
     async def get_status(self):
         async with self._lock:
             return await _status()
+
+    async def get_connection_info(self):
+        async with self._lock:
+            return await _connection_info()
 
     async def set_enabled(self, enabled):
         _boolean(enabled)

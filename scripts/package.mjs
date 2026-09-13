@@ -6,8 +6,9 @@ const root = new URL("../", import.meta.url);
 const metadata = JSON.parse(await readFile(new URL("package.json", root), "utf8"));
 // Explicit allowlists keep neighbouring backups, credentials and node_modules out.
 const documentationFiles = ["README.md", "assets/logo.png", "assets/screenshots/ssh-controls.png", "assets/screenshots/password-form.png"];
-const runtimeFiles = ["plugin.json", "package.json", "main.py", "dist/index.js", ...documentationFiles, "LICENSE", "THIRD_PARTY_NOTICES.md"];
-const sourceFiles = ["plugin.json", "package.json", "package-lock.json", "main.py", ...documentationFiles, "LICENSE", "THIRD_PARTY_NOTICES.md", ".gitignore", ".gitattributes", ".editorconfig", ".github/workflows/build-release.yml", "rollup.config.js", "tsconfig.json", "src/index.tsx", "tests/test_backend.py", "tests/test_release.py", "scripts/package.mjs", "scripts/clean.mjs", "scripts/check-version.mjs", "scripts/verify-package.mjs", "scripts/release.sh"];
+const mountFiles = ["mount/mount-windows.ps1", "mount/mount-linux.sh", "mount/mount-macos.sh", "mount/mount-unix.sh"];
+const runtimeFiles = ["plugin.json", "package.json", "main.py", "dist/index.js", ...documentationFiles, ...mountFiles, "LICENSE", "THIRD_PARTY_NOTICES.md"];
+const sourceFiles = ["plugin.json", "package.json", "package-lock.json", "main.py", ...documentationFiles, ...mountFiles, "LICENSE", "THIRD_PARTY_NOTICES.md", ".gitignore", ".gitattributes", ".editorconfig", ".github/workflows/build-release.yml", "rollup.config.js", "tsconfig.json", "src/index.tsx", "tests/test_backend.py", "tests/test_connection.py", "tests/test_mount.py", "tests/test_mount_windows.ps1", "tests/test_release.py", "scripts/package.mjs", "scripts/clean.mjs", "scripts/check-version.mjs", "scripts/verify-package.mjs", "scripts/release.sh"];
 const apiFiles = ["LICENSE", "README.md", "package.json", "src/index.ts", "src/types.ts", "src/types.d.ts", "dist/index.js", "dist/index.d.ts", "dist/types.d.ts"];
 
 async function archive(files) {

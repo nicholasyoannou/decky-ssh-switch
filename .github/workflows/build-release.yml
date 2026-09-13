@@ -35,7 +35,7 @@ jobs:
         id: version
         run: node scripts/check-version.mjs
       - run: npm ci --ignore-scripts
-      - name: Test backend and release publishing
+      - name: Test backend, mounting scripts and release publishing
         run: npm test
       - name: Build plugin and source archives
         run: npm run package
@@ -50,8 +50,24 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  mount-scripts:
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.13'
+      - name: Test native mounting scripts
+        run: python -B -m unittest discover -s tests -p test_mount.py -v
+
   release:
-    needs: build
+    needs: [build, mount-scripts]
     if: github.event_name != 'pull_request' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 10

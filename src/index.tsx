@@ -13,6 +13,15 @@ interface Status {
 }
 
 const getStatus = callable<[], Status>("get_status");
+interface ConnectionInfo {
+  username: string;
+  hostname: string;
+  addresses: { address: string; interface: string }[];
+  ports: number[];
+  folders: { label: string; path: string }[];
+  fingerprint: string;
+}
+const getConnectionInfo = callable<[], ConnectionInfo>("get_connection_info");
 const setEnabled = callable<[boolean], Status>("set_enabled");
 const setStartup = callable<[boolean], Status>("set_startup");
 const setPassword = callable<[string], { username: string; changed: boolean }>("set_password");
@@ -23,6 +32,39 @@ const passwordInputProps = { type: "password", autoComplete: "new-password" } as
 function sameStatus(previous: Status | null, next: Status) {
   return previous !== null && (Object.keys(next) as (keyof Status)[])
     .every((key) => previous[key] === next[key]);
+}
+
+function ConnectionDialog({ closeModal }: { closeModal?: () => void }) {
+  const [info, setInfo] = useState<ConnectionInfo | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let active = true;
+    void getConnectionInfo().then(
+      (result) => { if (active) setInfo(result); },
+      () => { if (active) setError("Could not load connection details. Enable SSH and check your network, then reopen this dialog."); },
+    );
+    return () => { active = false; };
+  }, []);
+  return <ConfirmModal
+    strTitle="Connect from computer"
+    strDescription="Run the mounting script on a computer on the same network."
+    strOKButtonText="Close"
+    bAlertDialog
+    onOK={closeModal}
+    onCancel={closeModal}
+  >
+    <div style={{ fontSize: 14, lineHeight: 1.4, overflowWrap: "anywhere" }}>
+      {error ? <p role="alert">{error}</p> : !info ? <p role="status">Loading connection details…</p> : <>
+        <p style={{ margin: "8px 0" }}><strong>Address:</strong> {info.addresses.length
+          ? info.addresses.map((item) => `${item.address} (${item.interface})`).join(", ")
+          : `${info.hostname} — no IPv4 address found; check your network.`}<br />
+          <strong>Port:</strong> {info.ports.join(", ")} <span style={{ marginLeft: 16 }}><strong>Username:</strong> {info.username}</span></p>
+        <p style={{ margin: "8px 0" }}><strong>Remote folder:</strong><br />{info.folders.map((folder) => <span key={folder.path}>{folder.label}: <code>{folder.path}</code><br /></span>)}</p>
+        <p style={{ margin: "8px 0" }}><strong>SSH fingerprint (Ed25519):</strong><br /><code style={{ fontSize: 12 }}>{info.fingerprint}</code></p>
+        <p style={{ margin: "8px 0" }}>Compare this fingerprint when prompted, then enter your Deck password.</p>
+      </>}
+    </div>
+  </ConfirmModal>;
 }
 
 interface PasswordDialogProps {
@@ -218,6 +260,9 @@ function Content() {
         </PanelSectionRow>
         <PanelSectionRow>
           <ButtonItem layout="below" disabled={busy || reading} onClick={openPasswordDialog}>Set password</ButtonItem>
+        </PanelSectionRow>
+        <PanelSectionRow>
+          <ButtonItem layout="below" disabled={busy || reading} onClick={() => showModal(<ConnectionDialog />)}>Connect from computer</ButtonItem>
         </PanelSectionRow>
         {status?.active_state === "failed" && <PanelSectionRow><div role="status">SSH failed to start. Check its service status in Desktop Mode.</div></PanelSectionRow>}
       </PanelSection>
