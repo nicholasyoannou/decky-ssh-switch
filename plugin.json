@@ -1,0 +1,10 @@
+{
+  "name": "SSH Switch",
+  "author": "SSH Switch contributors",
+  "api_version": 1,
+  "flags": ["root"],
+  "publish": {
+    "tags": ["ssh", "utility", "root"],
+    "description": "Turn SSH on or off, choose whether it starts at boot, and set your Steam Deck account password."
+  }
+}

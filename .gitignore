@@ -1,0 +1,20 @@
+# Dependencies and generated build/release output
+node_modules/
+/dist/
+/release/
+*.zip
+
+# Python environments and caches
+__pycache__/
+*.pyc
+.venv/
+
+# Local settings, credentials and editor/OS files
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
