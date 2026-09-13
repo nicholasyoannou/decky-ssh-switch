@@ -71,7 +71,7 @@ async def _run(*args, secret=None):
         await communication
         if isinstance(error, asyncio.CancelledError):
             raise
-        raise RuntimeError("The system command timed out. Refresh and check the current state before retrying.") from None
+        raise RuntimeError("The system command timed out. Wait for the status to update before retrying.") from None
     return process.returncode, (stdout or b"").decode("utf-8", "replace"), (stderr or b"").decode("utf-8", "replace")
 
 
@@ -240,11 +240,11 @@ class Plugin:
             if enabled and before["masked"]:
                 raise RuntimeError("SSH is masked by the system. Unmask sshd.service in Desktop Mode before enabling it.")
             if before["transitioning"]:
-                raise RuntimeError("SSH is changing state. Wait a moment, then refresh.")
+                raise RuntimeError("SSH is changing state. Wait a moment before retrying.")
             await _change("start" if enabled else "stop")
             after = await _status()
             if after["running"] != enabled or after["transitioning"]:
-                raise RuntimeError("SSH did not reach the requested state. Refresh to check its current state.")
+                raise RuntimeError("SSH did not reach the requested state. Wait for the status to update before retrying.")
             return after
 
     async def set_startup(self, enabled):
@@ -258,7 +258,7 @@ class Plugin:
             await _change("enable" if enabled else "disable")
             after = await _status()
             if after["startup"] != enabled:
-                raise RuntimeError("SSH startup did not reach the requested state. Refresh to check its current state.")
+                raise RuntimeError("SSH startup did not reach the requested state. Wait for the status to update before retrying.")
             return after
 
     async def set_password(self, password):

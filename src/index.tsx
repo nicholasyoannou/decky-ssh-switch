@@ -256,9 +256,6 @@ function Content() {
           />
         </PanelSectionRow>
         <PanelSectionRow>
-          <ButtonItem layout="below" disabled={busy || reading} onClick={() => { setError(""); void refresh(true); }}>Refresh status</ButtonItem>
-        </PanelSectionRow>
-        <PanelSectionRow>
           <ButtonItem layout="below" disabled={busy || reading} onClick={openPasswordDialog}>Set password</ButtonItem>
         </PanelSectionRow>
         <PanelSectionRow>
