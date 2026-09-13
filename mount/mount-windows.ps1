@@ -58,6 +58,23 @@ function Get-ScannedKey([string[]] $Lines) {
     return @{ Line = $key; Fingerprint = 'SHA256:' + [Convert]::ToBase64String($digest).TrimEnd('=') }
 }
 
+function New-SshfsStartInfo([string] $Executable, [string[]] $Arguments) {
+    $start = New-Object Diagnostics.ProcessStartInfo
+    $start.FileName = $Executable
+    $start.Arguments = ($Arguments | ForEach-Object { ConvertTo-NativeArgument $_ }) -join ' '
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    $start.RedirectStandardInput = $true
+    # A hidden Cygwin process cannot use a console's inherited output handles.
+    # Pipe all three streams, and drain both output pipes while it is running.
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    # SSHFS changes directory; the child PATH selects its bundled SSH client.
+    $start.WorkingDirectory = Split-Path -Parent $Executable
+    $start.EnvironmentVariables['PATH'] = $start.WorkingDirectory + ';' + $env:PATH
+    return $start
+}
+
 function Find-Sshfs {
     foreach ($base in @($env:ProgramW6432, $env:ProgramFiles, ${env:ProgramFiles(x86)})) {
         if ($base) {
@@ -182,20 +199,12 @@ function Mount-SteamDeck {
         Write-Host "SSH fingerprint (Ed25519): $($key.Fingerprint)"
         if ((Read-Host 'Does this exactly match the fingerprint on your Deck? Type yes to connect') -cne 'yes') { throw 'Connection cancelled.' }
         $arguments = Get-MountArguments $address $port $username $remote $drive $knownHosts
-        $start = New-Object Diagnostics.ProcessStartInfo
-        $start.FileName = $sshfs
-        $start.Arguments = ($arguments | ForEach-Object { ConvertTo-NativeArgument $_ }) -join ' '
-        $start.UseShellExecute = $false
-        $start.CreateNoWindow = $true
-        $start.RedirectStandardInput = $true
-        # SSHFS changes its working directory and does not parse quoted commands.
-        # Prepend only this child's PATH so it finds the bundled client even when
-        # the installation path contains spaces.
-        $start.WorkingDirectory = Split-Path -Parent $sshfs
-        $start.EnvironmentVariables['PATH'] = $start.WorkingDirectory + ';' + $env:PATH
+        $start = New-SshfsStartInfo $sshfs $arguments
         $password = Read-Host 'Deck account password' -AsSecureString
         if ($password.Length -eq 0) { throw 'The password cannot be blank.' }
         $process = [Diagnostics.Process]::Start($start)
+        $mountOutput = $process.StandardOutput.ReadToEndAsync()
+        $mountError = $process.StandardError.ReadToEndAsync()
         $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($password)
         $bytes = $null
         try {
@@ -213,7 +222,14 @@ function Mount-SteamDeck {
         while (-not $process.HasExited -and -not [IO.Directory]::Exists("$drive\") -and [DateTime]::UtcNow -lt $deadline) {
             Start-Sleep -Milliseconds 200
         }
-        if ($process.HasExited -or -not [IO.Directory]::Exists("$drive\")) { throw 'Mount failed. Check the password and remote folder; see the SSHFS message above.' }
+        if ($process.HasExited -or -not [IO.Directory]::Exists("$drive\")) {
+            $timedOut = -not $process.HasExited
+            if ($timedOut) { $process.Kill(); $process.WaitForExit() }
+            $detail = if ($mountError.Wait(2000)) { $mountError.Result.Trim() } else { '' }
+            if (-not $detail -and $mountOutput.Wait(2000)) { $detail = $mountOutput.Result.Trim() }
+            if (-not $detail) { $detail = if ($timedOut) { 'Connection timed out.' } else { "SSHFS exited with code $($process.ExitCode)." } }
+            throw "Mount failed: $detail"
+        }
         Write-Host "Mounted at $drive\ - keep this window open."
         $null = Read-Host 'Close files on the drive, then press Enter to disconnect'
     } finally {

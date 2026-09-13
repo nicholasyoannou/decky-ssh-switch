@@ -45,6 +45,24 @@ try {
     for ($i = 0; $i -lt $values.Count; $i++) { Assert-True ($actual[$i] -ceq $values[$i]) "Argument $i changed." }
 } finally { $child.Dispose() }
 
+# Exercise the actual hidden-process setup with output larger than pipe buffers.
+# This catches missing console handles and blocked/omitted failure diagnostics.
+$start = New-SshfsStartInfo $Python @('-c', 'import sys; assert sys.stdin.readline() == "synthetic\n"; sys.stdout.write("o" * 131072); sys.stderr.write("Mount diagnostic\n" * 8192); sys.exit(37)')
+$child = [Diagnostics.Process]::Start($start)
+try {
+    $output = $child.StandardOutput.ReadToEndAsync()
+    $errors = $child.StandardError.ReadToEndAsync()
+    $child.StandardInput.WriteLine('synthetic')
+    $child.StandardInput.Close()
+    Assert-True ($child.WaitForExit(10000)) 'Hidden child blocked while writing diagnostics.'
+    Assert-True ($child.ExitCode -eq 37) 'Hidden child exit code was lost.'
+    Assert-True ($output.Result.Length -eq 131072) 'Standard output was lost.'
+    Assert-True ($errors.Result.StartsWith('Mount diagnostic')) 'Failure diagnostic was lost.'
+} finally {
+    if (-not $child.HasExited) { $child.Kill(); $child.WaitForExit() }
+    $child.Dispose()
+}
+
 # No packages are installed by these tests. Exercise setup decisions, including
 # rechecking an installer's success instead of trusting only its exit code.
 $script:installs = New-Object 'Collections.Generic.List[string]'
