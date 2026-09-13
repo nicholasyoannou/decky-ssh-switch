@@ -12,7 +12,10 @@ prompt() {
 validate_connection() {
     # Use the IPv4 address displayed by SSH Switch, or a DNS hostname.
     [[ $1 =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]] || { fail 'Enter an IPv4 address or hostname, without a URL or username.'; return 1; }
-    [[ $2 =~ ^[0-9]{1,5}$ ]] && (( 10#$2 >= 1 && 10#$2 <= 65535 )) || { fail 'Port must be between 1 and 65535.'; return 1; }
+    if [[ ! $2 =~ ^[0-9]{1,5}$ ]] || (( 10#$2 < 1 || 10#$2 > 65535 )); then
+        fail 'Port must be between 1 and 65535.'
+        return 1
+    fi
     [[ $3 =~ ^[a-zA-Z_][a-zA-Z0-9_-]*\$?$ ]] || { fail 'Enter the username shown on the Deck.'; return 1; }
     [[ $4 == /* && $4 != *$'\n'* && $4 != *$'\r'* ]] || { fail 'Remote folder must be an absolute path.'; return 1; }
 }
@@ -27,16 +30,96 @@ unmount_folder() {
     fi
 }
 
+record_directory() {
+    if [[ $1 == Darwin ]]; then
+        printf '%s\n' "$HOME/Library/Application Support/SSH Switch/mounts"
+    else
+        printf '%s\n' "${XDG_STATE_HOME:-$HOME/.local/state}/ssh-switch/mounts"
+    fi
+}
+
+mount_identity() {
+    if [[ $1 == Linux ]]; then
+        # Raw output escapes whitespace in paths; the mount ID detects replacements.
+        findmnt --noheadings --raw --nocanonicalize --mountpoint "$2" --output ID,SOURCE,FSTYPE
+    else
+        local line listing
+        listing=$(mount) || return 2
+        while IFS= read -r line; do
+            if [[ ${line% (*} == *" on $2" ]]; then printf '%s\n' "$line"; return; fi
+        done <<< "$listing"
+        return 1
+    fi
+}
+
+record_mount() (
+    umask 077
+    local directory identity temporary
+    directory=$(record_directory "$1")
+    identity=$(mount_identity "$1" "$2") || return 1
+    [[ -n $identity && $identity != *$'\n'* ]] || return 1
+    mkdir -p -- "$directory" || return 1
+    [[ ! -L $directory && -O $directory && -w $directory ]] || return 1
+    temporary=$(mktemp "$directory/.pending.XXXXXXXX") || return 1
+    # Publish a separate record per mount, so concurrent runs cannot lose entries.
+    if ! { printf '%s\n%s\n' "$2" "$identity" > "$temporary" &&
+        mv -- "$temporary" "$directory/mount.${temporary##*.}"; }; then
+        rm -f -- "$temporary"
+        return 1
+    fi
+)
+
+unmount_recorded() {
+    local platform=$1 directory record folder expected current result failed=0 found=0
+    directory=$(record_directory "$platform")
+    if [[ $platform == Linux ]]; then
+        command -v findmnt >/dev/null 2>&1 || { fail 'Install util-linux (findmnt) first.'; return 1; }
+    fi
+    for record in "$directory"/mount.*; do
+        [[ -f $record && ! -L $record ]] || continue
+        found=1
+        if ! { IFS= read -r folder && IFS= read -r expected; } < "$record" ||
+            [[ $folder != /* || -z $expected ]]; then
+            printf 'Cannot read mount record: %s\n' "$record" >&2
+            failed=1
+            continue
+        fi
+        result=0
+        current=$(mount_identity "$platform" "$folder") || result=$?
+        if (( result > 1 )); then
+            printf 'Cannot check the mount at %s; its record was kept.\n' "$folder" >&2
+            failed=1
+            continue
+        elif (( result == 1 )); then
+            printf 'Already unmounted: %s\n' "$folder"
+        elif [[ $current != "$expected" ]]; then
+            printf 'Skipping %s: a different filesystem is mounted there.\n' "$folder"
+        elif unmount_folder "$platform" "$folder"; then
+            printf 'Unmounted: %s\n' "$folder"
+        else
+            printf 'Could not unmount %s. Close files using it and try again.\n' "$folder" >&2
+            failed=1
+            continue
+        fi
+        rm -- "$record" || return 1
+    done
+    (( found )) || printf '%s\n' 'No recorded folders to unmount.'
+    return "$failed"
+}
+
 mount_main() {
     local platform=$1
     shift
     [[ $(uname -s) == "$platform" ]] || { fail "This script is for $platform."; return 1; }
-    if [[ ${1:-} == --unmount && $# == 2 ]]; then
-        [[ $2 == /* ]] || { fail 'Use an absolute local mount path.'; return 1; }
-        unmount_folder "$platform" "$2"
-        return
+    if [[ ${1:-} == --unmount ]]; then
+        if [[ $# == 1 ]]; then unmount_recorded "$platform"; return; fi
+        if [[ $# == 2 ]]; then
+            [[ $2 == /* ]] || { fail 'Use an absolute local mount path.'; return 1; }
+            unmount_folder "$platform" "$2"
+            return
+        fi
     fi
-    [[ $# == 0 ]] || { printf 'Usage: bash %q [--unmount /local/folder]\n' "$0" >&2; return 1; }
+    [[ $# == 0 ]] || { printf 'Usage: bash %q [--unmount [/local/folder]]\n' "$0" >&2; return 1; }
     (( EUID != 0 )) || { fail 'Run this script as your normal user, without sudo.'; return 1; }
     if ! command -v sshfs >/dev/null 2>&1; then
         if [[ $platform == Darwin ]]; then
@@ -48,13 +131,13 @@ mount_main() {
     fi
     command -v ssh >/dev/null 2>&1 || { fail 'Install the OpenSSH client first.'; return 1; }
     if [[ $platform == Linux ]]; then
-        command -v mountpoint >/dev/null 2>&1 || { fail 'Install util-linux (mountpoint) first.'; return 1; }
+        command -v findmnt >/dev/null 2>&1 || { fail 'Install util-linux (findmnt) first.'; return 1; }
         command -v fusermount3 >/dev/null 2>&1 || command -v fusermount >/dev/null 2>&1 || { fail 'Install FUSE (fusermount3 or fusermount) first.'; return 1; }
     fi
 
     local address port username remote folder
     printf '%s\n' 'On your Deck, enable SSH and open SSH Switch > Connect from computer.'
-    address=$(prompt 'Address' '')
+    address=$(prompt 'Address' 'steamdeck')
     port=$(prompt 'Port' '22')
     username=$(prompt 'Username' 'deck')
     remote=$(prompt 'Remote folder' "/home/$username")
@@ -65,11 +148,7 @@ mount_main() {
     mkdir -p -- "$folder"
     # Canonicalize before checking mounts, including symlinks in parent folders.
     folder=$(cd -- "$folder" && pwd -P)
-    if [[ $platform == Linux ]]; then
-        if mountpoint -q -- "$folder"; then fail 'This folder is already mounted.'; return 1; fi
-    else
-        if mount | grep -F " on $folder (" >/dev/null; then fail 'This folder is already mounted.'; return 1; fi
-    fi
+    if mount_identity "$platform" "$folder" >/dev/null; then fail 'This folder is already mounted.'; return 1; fi
     [[ -O $folder && -w $folder && -z $(ls -A -- "$folder") ]] || { fail 'Choose an empty, writable folder owned by your user.'; return 1; }
 
     printf '%s\n' 'Compare the SSH fingerprint with the one on your Deck before accepting it.'
@@ -80,8 +159,15 @@ mount_main() {
         -o ssh_command='ssh -F /dev/null' -o StrictHostKeyChecking=ask \
         -o HostKeyAlgorithms=ssh-ed25519 -o ConnectTimeout=10 \
         -o ServerAliveInterval=15 -o ServerAliveCountMax=3
-    printf 'Mounted at %s\n' "$folder"
     local script
     script="$(cd -- "$(dirname -- "$0")" && pwd)/$(basename -- "$0")"
-    printf 'To disconnect later: bash %q --unmount %q\n' "$script" "$folder"
+    if ! record_mount "$platform" "$folder"; then
+        printf 'Mounted at %s, but its location could not be saved.\n' "$folder" >&2
+        printf 'To disconnect: bash %q --unmount %q\n' "$script" "$folder" >&2
+        return 1
+    fi
+    printf 'Mounted at %s\n' "$folder"
+    local unmount_script=unmount-linux.sh
+    [[ $platform != Darwin ]] || unmount_script=unmount-macos.sh
+    printf 'To disconnect later: bash %q\n' "$(dirname -- "$script")/$unmount_script"
 }

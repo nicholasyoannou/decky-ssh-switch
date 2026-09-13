@@ -28,7 +28,7 @@ for (const source of [false, true]) {
   const required = source
     ? ["package-lock.json", "src/index.tsx", ".editorconfig", ".gitignore", ".gitattributes", ".github/workflows/build-release.yml", "scripts/clean.mjs", "scripts/package.mjs", "scripts/release.sh", "scripts/check-version.mjs", "scripts/verify-package.mjs", "tests/test_backend.py", "tests/test_connection.py", "tests/test_mount.py", "tests/test_mount_windows.ps1", "tests/test_release.py"]
     : ["dist/index.js"];
-  for (const file of ["main.py", "README.md", "assets/logo.png", "assets/screenshots/ssh-controls.png", "assets/screenshots/password-form.png", "LICENSE", "THIRD_PARTY_NOTICES.md", "mount/mount-windows.ps1", "mount/mount-linux.sh", "mount/mount-macos.sh", "mount/mount-unix.sh", ...required]) {
+  for (const file of ["main.py", "README.md", "assets/logo.png", "assets/screenshots/ssh-controls.png", "assets/screenshots/password-form.png", "LICENSE", "THIRD_PARTY_NOTICES.md", "mount/mount-windows.ps1", "mount/mount-linux.sh", "mount/unmount-linux.sh", "mount/mount-macos.sh", "mount/unmount-macos.sh", "mount/mount-unix.sh", ...required]) {
     assert.deepEqual(Buffer.from(files[`decky-ssh/${file}`]), await readFile(new URL(file, root)), `Stale or missing file: ${file}`);
   }
   assert.ok(files["decky-ssh/third_party/decky-api/LICENSE"]);
@@ -48,7 +48,7 @@ for (const platform of ["windows", "linux", "macos"]) {
   const files = unzipSync(bytes);
   const scripts = platform === "windows"
     ? ["mount-windows.cmd", "unmount-windows.cmd", "mount-windows.ps1"]
-    : [`mount-${platform}.sh`, "mount-unix.sh"];
+    : [`mount-${platform}.sh`, `unmount-${platform}.sh`, "mount-unix.sh"];
   assert.deepEqual(Object.keys(files).sort(), ["LICENSE", "README.txt", ...scripts].sort(), `Unexpected files in ${filename}`);
   for (const script of scripts) {
     let expected = await readFile(new URL(`mount/${script}`, root));
@@ -60,6 +60,6 @@ for (const platform of ["windows", "linux", "macos"]) {
   const readme = strFromU8(files["README.txt"]);
   assert.ok(readme.includes(`Version: ${version}\n`), `Missing version in ${filename}`);
   assert.ok(readme.includes(scripts[0]), `Missing launch instructions in ${filename}`);
-  if (platform === "windows") assert.ok(readme.includes("unmount-windows.cmd"), "Missing unmount instructions.");
+  assert.ok(readme.includes(platform === "windows" ? "unmount-windows.cmd" : `unmount-${platform}.sh`), "Missing unmount instructions.");
   console.log(`Verified ${filename}: ${Object.keys(files).length} files, ${bytes.length} bytes`);
 }

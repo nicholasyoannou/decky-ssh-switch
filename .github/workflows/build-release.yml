@@ -35,6 +35,8 @@ jobs:
         id: version
         run: node scripts/check-version.mjs
       - run: npm ci --ignore-scripts
+      - name: Check shell scripts
+        run: shellcheck -x -P SCRIPTDIR mount/*.sh scripts/release.sh
       - name: Test backend, mounting scripts and release publishing
         run: npm test
       - name: Build plugin, source and mounting helper archives

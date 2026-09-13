@@ -2,6 +2,7 @@
 
 import json
 import os
+from contextlib import contextmanager
 from pathlib import Path
 import shutil
 import subprocess
@@ -15,40 +16,75 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "Requires Bash on Linux/macOS")
 class UnixMountTests(unittest.TestCase):
-    def run_mount(self, platform="Linux", address="192.0.2.10", port="22", remote=None, occupied=False, nonempty=False, failure=False, unmount=False):
+    @contextmanager
+    def computer(self, platform):
         with tempfile.TemporaryDirectory(prefix="ssh switch ") as temporary:
-            root = Path(temporary)
+            root = Path(temporary).resolve()
             folder = root / "mount space ' quote"
             folder.mkdir()
-            if nonempty:
-                (folder / "existing.txt").write_text("keep")
             log = root / "calls.jsonl"
+            state = root / "mounted.json"
+            state.write_text("{}")
             fake = root / "fake"
             fake.write_text(f"#!{sys.executable}\n" + """
 import json, os, sys
 from pathlib import Path
 name = Path(sys.argv[0]).name
+state = Path(os.environ['MOUNT_STATE'])
+mounts = json.loads(state.read_text())
 if name == 'uname': print(os.environ['MOUNT_PLATFORM'])
-elif name == 'mountpoint': sys.exit(0 if os.environ['MOUNT_OCCUPIED'] == '1' else 1)
+elif name == 'findmnt':
+    if os.environ.get('MOUNT_QUERY_FAILURE'): sys.exit(2)
+    folder = sys.argv[sys.argv.index('--mountpoint') + 1]
+    if folder not in mounts: sys.exit(1)
+    print(mounts[folder] + ' fuse.sshfs')
 elif name == 'mount':
-    if os.environ['MOUNT_OCCUPIED'] == '1': print('test on ' + os.environ['MOUNT_FOLDER'] + ' (nfs)')
+    if os.environ.get('MOUNT_QUERY_FAILURE'): sys.exit(2)
+    for folder, identity in mounts.items(): print(identity + ' on ' + folder + ' (nfs)')
 else:
     with open(os.environ['MOUNT_LOG'], 'a') as stream: stream.write(json.dumps([name] + sys.argv[1:]) + '\\n')
-    if name == 'sshfs' and os.environ['MOUNT_FAILURE'] == '1': sys.exit(1)
+    if name == 'sshfs':
+        if os.environ.get('MOUNT_FAILURE'): sys.exit(1)
+        mounts[sys.argv[2]] = str(len(mounts) + 100) + ' ' + sys.argv[1]
+    elif name in ('fusermount3', 'umount'):
+        if sys.argv[-1] == os.environ.get('MOUNT_BUSY_FOLDER'): sys.exit(1)
+        mounts.pop(sys.argv[-1], None)
+    state.write_text(json.dumps(mounts))
 """)
             fake.chmod(0o755)
-            for command in ("uname", "sshfs", "ssh", "mountpoint", "mount", "fusermount3", "umount"):
+            for command in ("uname", "sshfs", "ssh", "findmnt", "mount", "fusermount3", "umount"):
                 (root / command).symlink_to(fake)
             env = {**os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"], "MOUNT_PLATFORM": platform,
-                   "MOUNT_OCCUPIED": str(int(occupied)), "MOUNT_FAILURE": str(int(failure)), "MOUNT_FOLDER": str(folder), "MOUNT_LOG": str(log)}
+                   "MOUNT_STATE": str(state), "MOUNT_LOG": str(log), "HOME": str(root / "home"), "XDG_STATE_HOME": str(root / "state")}
+            yield root, folder, log, state, env
+
+    def records(self, root):
+        return sorted(root.rglob("mount.*"))
+
+    def calls(self, log):
+        return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+
+    def run_mount(self, platform="Linux", address="192.0.2.10", port="22", remote=None, occupied=False, nonempty=False, failure=False, unmount=False):
+        with self.computer(platform) as (root, folder, log, state, env):
+            if nonempty:
+                (folder / "existing.txt").write_text("keep")
+            if occupied:
+                state.write_text(json.dumps({str(folder): "another filesystem"}))
+            if failure:
+                env["MOUNT_FAILURE"] = "1"
             script = ROOT / "mount" / ("mount-linux.sh" if platform == "Linux" else "mount-macos.sh")
             args = ["bash", str(script)] + (["--unmount", str(folder)] if unmount else [])
             remote = remote or "/run/media/deck/My SD ' $(touch NEVER_CREATE)"
             result = subprocess.run(args, input=f"{address}\n{port}\ndeck\n{remote}\n{folder}\n", env=env, cwd=root, capture_output=True, text=True)
-            calls = [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+            calls = self.calls(log)
             self.assertFalse((root / "NEVER_CREATE").exists())
             if nonempty:
                 self.assertEqual((folder / "existing.txt").read_text(), "keep")
+            records = self.records(root)
+            self.assertEqual(len(records), int(result.returncode == 0 and not unmount))
+            if records:
+                self.assertEqual(records[0].read_text().splitlines()[0], str(folder))
+                self.assertEqual(records[0].stat().st_mode & 0o777, 0o600)
             return result, calls, str(folder), remote
 
     def test_both_platforms_preserve_literal_remote_and_local_paths(self):
@@ -86,6 +122,96 @@ else:
             result, calls, folder, _ = self.run_mount(platform=platform, unmount=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(calls, [[command, "-u", folder]] if platform == "Linux" else [[command, folder]])
+
+    def test_recorded_unmount_handles_multiple_mounts_busy_drives_and_retries(self):
+        for platform in ("Linux", "Darwin"):
+            with self.subTest(platform=platform), self.computer(platform) as (root, folder, log, state, env):
+                suffix = "linux" if platform == "Linux" else "macos"
+                second = root / "second $(touch NEVER_CREATE)"
+                for destination in (folder, second):
+                    result = subprocess.run(["bash", str(ROOT / f"mount/mount-{suffix}.sh")],
+                                            input=f"\n\n\n\n{destination}\n", env=env, cwd=root, capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(len(self.records(root)), 2)
+                self.assertIn("deck@steamdeck:/home/deck", self.calls(log)[0])
+                args = ["bash", str(ROOT / f"mount/unmount-{suffix}.sh")]
+                result = subprocess.run(args, env={**env, "MOUNT_BUSY_FOLDER": str(folder)}, capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(list(json.loads(state.read_text())), [str(folder)], result.stdout + result.stderr)
+                self.assertEqual(len(self.records(root)), 1)
+                self.assertEqual(self.records(root)[0].read_text().splitlines()[0], str(folder))
+                result = subprocess.run(args, env=env, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(json.loads(state.read_text()), {})
+                self.assertEqual(self.records(root), [])
+                count = len(self.calls(log))
+                result = subprocess.run(args, env=env, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("No recorded folders", result.stdout)
+                self.assertEqual(len(self.calls(log)), count)
+                self.assertTrue(folder.is_dir() and second.is_dir())
+                self.assertFalse((root / "NEVER_CREATE").exists())
+
+    def test_recorded_unmount_preserves_replacements_and_handles_missing_mounts(self):
+        for platform in ("Linux", "Darwin"):
+            for replacement in (False, True):
+                with self.subTest(platform=platform, replacement=replacement), self.computer(platform) as (root, folder, log, state, env):
+                    suffix = "linux" if platform == "Linux" else "macos"
+                    result = subprocess.run(["bash", str(ROOT / f"mount/mount-{suffix}.sh")],
+                                            input=f"\n\n\n\n{folder}\n", env=env, capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    current = {str(folder): "replacement filesystem"} if replacement else {}
+                    state.write_text(json.dumps(current))
+                    result = subprocess.run(["bash", str(ROOT / f"mount/unmount-{suffix}.sh")], env=env, capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(json.loads(state.read_text()), current)
+                    self.assertEqual(len(self.calls(log)), 1, "No native unmount should run for a missing or replaced mount")
+                    self.assertEqual(self.records(root), [])
+
+    def test_unmount_keeps_records_when_inspection_fails(self):
+        for platform in ("Linux", "Darwin"):
+            with self.subTest(platform=platform), self.computer(platform) as (root, folder, log, state, env):
+                suffix = "linux" if platform == "Linux" else "macos"
+                result = subprocess.run(["bash", str(ROOT / f"mount/mount-{suffix}.sh")],
+                                        input=f"\n\n\n\n{folder}\n", env=env, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                before = self.records(root)[0].read_bytes()
+                result = subprocess.run(["bash", str(ROOT / f"mount/unmount-{suffix}.sh")],
+                                        env={**env, "MOUNT_QUERY_FAILURE": "1"}, capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(self.records(root)[0].read_bytes(), before)
+                self.assertEqual(len(self.calls(log)), 1)
+
+    def test_unmount_rejects_a_corrupt_record(self):
+        for platform in ("Linux", "Darwin"):
+            with self.subTest(platform=platform), self.computer(platform) as (root, folder, log, state, env):
+                suffix = "linux" if platform == "Linux" else "macos"
+                result = subprocess.run(["bash", str(ROOT / f"mount/mount-{suffix}.sh")],
+                                        input=f"\n\n\n\n{folder}\n", env=env, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.records(root)[0].write_text("relative/path\ninvalid record\n")
+                result = subprocess.run(["bash", str(ROOT / f"mount/unmount-{suffix}.sh")], env=env, capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Cannot read mount record", result.stderr)
+                self.assertEqual(len(self.records(root)), 1)
+                self.assertEqual(len(self.calls(log)), 1)
+                self.assertIn(str(folder), json.loads(state.read_text()))
+
+    def test_record_write_failure_prints_a_manual_unmount_command(self):
+        for platform in ("Linux", "Darwin"):
+            with self.subTest(platform=platform), self.computer(platform) as (root, folder, log, state, env):
+                suffix = "linux" if platform == "Linux" else "macos"
+                unavailable = root / "not-a-folder"
+                unavailable.write_text("keep")
+                env["XDG_STATE_HOME" if platform == "Linux" else "HOME"] = str(unavailable)
+                result = subprocess.run(["bash", str(ROOT / f"mount/mount-{suffix}.sh")],
+                                        input=f"\n\n\n\n{folder}\n", env=env, capture_output=True, text=True)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("its location could not be saved", result.stderr)
+                self.assertIn("--unmount", result.stderr)
+                self.assertEqual(self.records(root), [])
+                self.assertIn(str(folder), json.loads(state.read_text()))
+                self.assertEqual(unavailable.read_text(), "keep")
 
 
 @unittest.skipUnless(os.name == "nt", "Requires native Windows process argument parsing")

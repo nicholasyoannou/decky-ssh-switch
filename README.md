@@ -52,7 +52,7 @@ Windows drives remain mounted after closing the script. Double-click **`unmount-
 
 Windows uses SSHFS-Win's standard network-drive provider, which does not verify the Deck's SSH fingerprint.
 
-On Linux and macOS, enter the connection details and local folder, compare the SSH fingerprint when prompted, then enter your Deck password. The script prints the command to unmount when finished.
+On Linux and macOS, enter the connection details and local folder, compare the SSH fingerprint when prompted, then enter your Deck password. Run **`bash unmount-linux.sh`** or **`bash unmount-macos.sh`** to disconnect the recorded mounts without entering their paths again. Passwords are not saved. Mount records are stored under `${XDG_STATE_HOME:-~/.local/state}/ssh-switch/mounts` on Linux and `~/Library/Application Support/SSH Switch/mounts` on macOS. Busy mounts are kept for retry; local folders and unrelated mounts are left alone.
 
 ## Build and test
 
