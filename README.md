@@ -32,7 +32,7 @@ For a manual install, extract the ZIP in Desktop Mode. Copy the extracted `decky
 
 Enable SSH and open **Connect from computer** on the Deck. Keep both devices on the same network.
 
-Download the helper for your computer and extract all files:
+The mounting helpers are included in [GitHub Releases](https://github.com/nicholasyoannou/decky-ssh-switch/releases/latest). Download the archive for your OS below and extract all files.
 
 | Download | After extracting |
 | --- | --- |
@@ -40,19 +40,39 @@ Download the helper for your computer and extract all files:
 | **[Linux](https://github.com/nicholasyoannou/decky-ssh-switch/releases/latest/download/ssh-switch-mount-linux.zip)** | Run `bash mount-linux.sh` in the extracted folder |
 | **[macOS](https://github.com/nicholasyoannou/decky-ssh-switch/releases/latest/download/ssh-switch-mount-macos.zip)** | Run `bash mount-macos.sh` in the extracted folder |
 
-- **Windows:** the launcher starts PowerShell and automatically installs missing [SSHFS-Win and WinFsp](https://github.com/winfsp/sshfs-win) dependencies through WinGet. Approve the Windows administrator prompt if shown. Keep the `.cmd` and `.ps1` files together.
-- **Linux:** SSHFS from your package manager, e.g. `sudo apt install sshfs` on Ubuntu/Debian.
-- **macOS:** [FUSE-T and SSHFS](https://github.com/macos-fuse-t/fuse-t#installing-from-brew), using `brew install macos-fuse-t/homebrew-cask/fuse-t macos-fuse-t/homebrew-cask/sshfs-fuse-t`.
+Unmount helpers leave saved settings, local folders and unrelated drives alone. If a mount is busy, close files using it and retry.
 
-On Windows, the address defaults to `steamdeck` and setup creates one persistent drive (default `S:`). Separate Home, SD card and Root drives are optional and default to **No**. Use the address and folder paths shown on the Deck if the defaults differ.
+### Windows
 
-**Save settings and password** defaults to **Yes**. Windows stores a data file at `%LOCALAPPDATA%\SSH Switch\mount-windows.xml`, with the password encrypted for your Windows account on that PC. Later runs reuse it without setup prompts. Run `mount-windows.cmd -Configure` to change settings, or delete the data file to forget them.
+1. Double-click `mount-windows.cmd`. It opens PowerShell and installs missing [SSHFS-Win and WinFsp](https://github.com/winfsp/sshfs-win) dependencies through WinGet. Approve the administrator prompt if shown.
+2. Enter your connection details. The defaults are `steamdeck` and one persistent `S:` drive. Separate Home, SD card and Root drives are optional and default to **No**.
+3. Choose whether to **Save settings and password** (default **Yes**). The password is encrypted for your Windows account on this PC. Later runs reconnect using the saved setup.
 
-Windows drives remain mounted after closing the script. Double-click **`unmount-windows.cmd`** to disconnect the drives recorded by the mount helper. Their locations are saved in `%LOCALAPPDATA%\SSH Switch\mounted-windows.xml` even if you decline to save your password. Unmounting keeps saved connection settings for next time and leaves unrelated drives alone. Close files using a drive if Windows reports it is busy.
+- **Disconnect:** double-click `unmount-windows.cmd`. Closing the mounting script leaves the drives connected.
+- **Change setup:** run `mount-windows.cmd -Configure`. To forget saved settings and the password, delete `%LOCALAPPDATA%\SSH Switch\mount-windows.xml`.
 
-Windows uses SSHFS-Win's standard network-drive provider, which does not verify the Deck's SSH fingerprint.
+Keep the `.cmd` and `.ps1` files together. SSHFS-Win's network-drive provider does not verify the Deck's SSH fingerprint.
 
-On Linux and macOS, enter the connection details and local folder, compare the SSH fingerprint when prompted, then enter your Deck password. Run **`bash unmount-linux.sh`** or **`bash unmount-macos.sh`** to disconnect the recorded mounts without entering their paths again. Passwords are not saved. Mount records are stored under `${XDG_STATE_HOME:-~/.local/state}/ssh-switch/mounts` on Linux and `~/Library/Application Support/SSH Switch/mounts` on macOS. Busy mounts are kept for retry; local folders and unrelated mounts are left alone.
+### Linux
+
+1. Install SSHFS from your package manager, e.g. `sudo apt install sshfs` on Ubuntu/Debian.
+2. Run `bash mount-linux.sh` in the extracted folder.
+3. Enter the connection details shown on the Deck and choose a local folder. Compare the SSH fingerprint when prompted, then enter your Deck password.
+
+**Disconnect:** run `bash unmount-linux.sh`. Mount locations are remembered; passwords are not saved.
+
+### macOS
+
+1. Install [FUSE-T and SSHFS](https://github.com/macos-fuse-t/fuse-t#installing-from-brew):
+
+   ```sh
+   brew install macos-fuse-t/homebrew-cask/fuse-t macos-fuse-t/homebrew-cask/sshfs-fuse-t
+   ```
+
+2. Run `bash mount-macos.sh` in the extracted folder.
+3. Enter the connection details shown on the Deck and choose a local folder. Compare the SSH fingerprint when prompted, then enter your Deck password.
+
+**Disconnect:** run `bash unmount-macos.sh`. Mount locations are remembered; passwords are not saved.
 
 ## Build and test
 
