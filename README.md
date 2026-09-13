@@ -46,9 +46,13 @@ Or run from a terminal in the extracted `decky-ssh` folder:
 | Linux | `bash mount/mount-linux.sh` |
 | macOS | `bash mount/mount-macos.sh` |
 
-Enter the address, port, username and remote folder shown on the Deck, then choose a drive letter or local folder. Compare the SSH fingerprint when prompted and enter your Deck password.
+On Windows, the address defaults to `steamdeck` and setup creates one persistent drive (default `S:`). Separate Home, SD card and Root drives are optional and default to **No**. Use the address and folder paths shown on the Deck if the defaults differ.
 
-On Windows, keep the script open; close files on the drive and press Enter to disconnect. Linux and macOS print the command to unmount when finished.
+**Save settings and password** defaults to **Yes**. Windows stores a data file at `%LOCALAPPDATA%\SSH Switch\mount-windows.xml`, with the password encrypted for your Windows account on that PC. Later runs reuse it without setup prompts. Run `mount-windows.cmd -Configure` to change settings, or delete the data file to forget them.
+
+Windows drives remain mounted after closing the script. Right-click a drive in File Explorer and choose **Disconnect** to remove it. Windows uses SSHFS-Win's standard network-drive provider, which does not verify the Deck's SSH fingerprint.
+
+On Linux and macOS, enter the connection details and local folder, compare the SSH fingerprint when prompted, then enter your Deck password. The script prints the command to unmount when finished.
 
 ## Build and test
 

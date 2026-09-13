@@ -100,15 +100,17 @@ class WindowsMountTests(unittest.TestCase):
             for code in (0, 37):
                 with self.subTest(code=code):
                     (folder / "mount-windows.ps1").write_text(
+                        "param([switch] $Configure)\n"
+                        "if (-not $Configure) { exit 99 }\n"
                         "[IO.File]::WriteAllText($env:SSH_SWITCH_LAUNCHER_LOG, $PSScriptRoot)\n"
                         f"exit {code}\n", encoding="utf-8")
-                    result = subprocess.run([os.environ["COMSPEC"], "/d", "/c", "mount-windows.cmd"],
+                    result = subprocess.run([os.environ["COMSPEC"], "/d", "/c", "mount-windows.cmd", "-Configure"],
                                             cwd=folder, env=environment, input="\n", capture_output=True, text=True, timeout=20)
                     self.assertEqual(result.returncode, code, result.stdout + result.stderr)
                     self.assertEqual(log.read_text(), str(folder))
                     self.assertEqual("Press any key to close." in result.stdout, code != 0)
 
-    def test_powershell_validation_quoting_and_host_verification(self):
+    def test_powershell_setup_persistence_and_encrypted_settings(self):
         for shell in ("powershell", "pwsh"):
             if not shutil.which(shell):
                 continue

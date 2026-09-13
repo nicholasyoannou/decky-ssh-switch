@@ -1,6 +1,6 @@
 #Requires -Version 5.1
 [CmdletBinding()]
-param()
+param([switch] $Configure)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -16,63 +16,13 @@ function Test-ConnectionInput([string] $Address, [string] $Port, [string] $Usern
     if ($Address -cnotmatch '^[a-zA-Z0-9][a-zA-Z0-9.-]*$') { throw 'Enter an IPv4 address or hostname, without a URL or username.' }
     if ($Port -notmatch '^[0-9]{1,5}$' -or [int]$Port -lt 1 -or [int]$Port -gt 65535) { throw 'Port must be between 1 and 65535.' }
     if ($Username -cnotmatch '^[a-zA-Z_][a-zA-Z0-9_-]*\$?$') { throw 'Enter the username shown on the Deck.' }
-    if (-not $RemoteFolder.StartsWith('/') -or $RemoteFolder -match '[\x00\r\n]') { throw 'Remote folder must be an absolute path.' }
+    if (-not $RemoteFolder.StartsWith('/') -or $RemoteFolder -match '[\x00-\x1f\\:*?"<>|]') { throw 'Remote folder must be an absolute path without Windows-reserved characters.' }
 }
 
 function ConvertTo-NativeArgument([string] $Value) {
     # Windows CRT quoting for ProcessStartInfo on Windows PowerShell 5.1.
     # No shell evaluates these arguments.
     return '"' + [regex]::Replace([regex]::Replace($Value, '(\\*)"', '$1$1\"'), '(\\+)$', '$1$1') + '"'
-}
-
-function ConvertTo-SshPath([string] $Value) {
-    # Cygwin OpenSSH accepts forward-slash Windows paths; SSH's option parser
-    # needs its own quotes when a path contains spaces.
-    if ($Value -match '["\r\n,]') { throw 'SSHFS cannot use an installation or profile path containing a quote, comma, or newline.' }
-    return '"' + $Value.Replace('\', '/') + '"'
-}
-
-function Get-MountArguments([string] $Address, [string] $Port, [string] $Username, [string] $RemoteFolder,
-    [string] $Drive, [string] $KnownHosts) {
-    Test-ConnectionInput $Address $Port $Username $RemoteFolder
-    if ($Drive -notmatch '^[D-Z]:$') { throw 'Choose a drive letter from D to Z.' }
-    return @(
-        "${Username}@${Address}:$RemoteFolder", $Drive, '-p', ([int]$Port).ToString(), '-f',
-        '-o', 'ssh_command=ssh.exe -F /dev/null',
-        '-o', ('UserKnownHostsFile=' + (ConvertTo-SshPath $KnownHosts)),
-        '-o', 'GlobalKnownHostsFile=/dev/null', '-o', 'StrictHostKeyChecking=yes',
-        '-o', 'HostKeyAlgorithms=ssh-ed25519', '-o', 'PreferredAuthentications=password',
-        '-o', 'password_stdin', '-o', 'ConnectTimeout=10',
-        '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3',
-        '-o', 'sshfs_sync', '-o', 'idmap=user', '-o', 'umask=077', '-o', 'volname=Steam Deck'
-    )
-}
-
-function Get-ScannedKey([string[]] $Lines) {
-    $keys = @($Lines | Where-Object { $_ -cmatch '^\S+ ssh-ed25519 [A-Za-z0-9+/]+={0,2}$' } | Select-Object -Unique)
-    if ($keys.Count -ne 1) { throw 'Could not read one Ed25519 host key. Check the address, port, and that SSH is enabled.' }
-    $key = $keys[0]
-    $sha = [Security.Cryptography.SHA256]::Create()
-    try { $digest = $sha.ComputeHash([Convert]::FromBase64String(($key -split ' ')[2])) }
-    finally { $sha.Dispose() }
-    return @{ Line = $key; Fingerprint = 'SHA256:' + [Convert]::ToBase64String($digest).TrimEnd('=') }
-}
-
-function New-SshfsStartInfo([string] $Executable, [string[]] $Arguments) {
-    $start = New-Object Diagnostics.ProcessStartInfo
-    $start.FileName = $Executable
-    $start.Arguments = ($Arguments | ForEach-Object { ConvertTo-NativeArgument $_ }) -join ' '
-    $start.UseShellExecute = $false
-    $start.CreateNoWindow = $true
-    $start.RedirectStandardInput = $true
-    # A hidden Cygwin process cannot use a console's inherited output handles.
-    # Pipe all three streams, and drain both output pipes while it is running.
-    $start.RedirectStandardOutput = $true
-    $start.RedirectStandardError = $true
-    # SSHFS changes directory; the child PATH selects its bundled SSH client.
-    $start.WorkingDirectory = Split-Path -Parent $Executable
-    $start.EnvironmentVariables['PATH'] = $start.WorkingDirectory + ';' + $env:PATH
-    return $start
 }
 
 function Find-Sshfs {
@@ -138,118 +88,181 @@ function Initialize-MountDependencies {
     return $sshfs
 }
 
-function Mount-SteamDeck {
-    if ($env:OS -ne 'Windows_NT') { throw 'Use mount-linux.sh or mount-macos.sh on this computer.' }
-    $sshfs = Initialize-MountDependencies
-    $ssh = Join-Path (Split-Path -Parent $sshfs) 'ssh.exe'
-    if (-not (Test-Path -LiteralPath $ssh -PathType Leaf)) { throw 'Reinstall SSHFS-Win: its bundled SSH client is missing.' }
+function Read-YesNo([string] $Label, [bool] $Default) {
+    $hint = if ($Default) { 'Y/n' } else { 'y/N' }
+    while ($true) {
+        $answer = (Read-Host "$Label [$hint]").Trim()
+        if ($answer -eq '') { return $Default }
+        if ($answer -match '^(y|yes)$') { return $true }
+        if ($answer -match '^(n|no)$') { return $false }
+        Write-Host 'Enter yes or no.'
+    }
+}
 
+function Read-Mount([string] $Name, [string] $RemoteFolder, [string] $DefaultDrive) {
+    $drive = (Read-Default "$Name drive letter" $DefaultDrive).Trim().TrimEnd(':').ToUpperInvariant()
+    return [pscustomobject]@{ Name = $Name; RemoteFolder = $RemoteFolder; Drive = $drive }
+}
+
+function Read-MountSettings {
     Write-Host 'On your Deck, enable SSH and open SSH Switch > Connect from computer.'
-    $address = Read-Default 'Address' ''
+    $address = Read-Default 'Address' 'steamdeck'
     $port = Read-Default 'Port' '22'
     $username = Read-Default 'Username' 'deck'
-    $remote = Read-Default 'Remote folder' "/home/$username"
-    Test-ConnectionInput $address $port $username $remote
-    $drive = (Read-Default 'Drive letter' 'S').TrimEnd(':').ToUpperInvariant() + ':'
-    if ($drive -notmatch '^[D-Z]:$') { throw 'Choose a drive letter from D to Z.' }
-    $letter = $drive.Substring(0, 1)
-    # Get-PSDrive also catches disconnected mappings and custom PowerShell drives.
-    if ((Get-PSDrive -Name $letter -ErrorAction SilentlyContinue) -or
-        ([IO.DriveInfo]::GetDrives().Name -contains "$drive\")) { throw "$drive is already in use. Choose another letter." }
+    $separate = Read-YesNo 'Create separate Home, SD card and Root drives?' $false
+    $mounts = @()
+    if ($separate) {
+        $remote = Read-Default 'Home folder' "/home/$username"
+        $mounts += Read-Mount 'Home' $remote 'X'
+        $sd = Read-Default 'SD card folder (blank to skip)' ''
+        if ($sd) { $mounts += Read-Mount 'SD card' $sd 'Y' }
+        $mounts += Read-Mount 'Root' '/' 'Z'
+    } else {
+        $remote = Read-Default 'Remote folder' "/home/$username"
+        $mounts += Read-Mount 'Steam Deck' $remote 'S'
+    }
+    return [pscustomobject]@{
+        Version = 1; Address = $address; Port = $port; Username = $username
+        Mounts = $mounts; Credential = $null
+    }
+}
 
-    # Only this public host key is written to disk. The password travels solely
-    # over the child process's stdin, never in arguments or a settings file.
-    $temporary = Join-Path ([IO.Path]::GetTempPath()) ('ssh-switch-' + [guid]::NewGuid().ToString('N'))
-    $process = $null
-    $password = $null
+function Test-MountSettings($Settings) {
+    if ($Settings.Version -ne 1 -or @($Settings.Mounts).Count -lt 1 -or @($Settings.Mounts).Count -gt 3) {
+        throw 'Invalid mount settings.'
+    }
+    $letters = @()
+    foreach ($mount in $Settings.Mounts) {
+        Test-ConnectionInput $Settings.Address $Settings.Port $Settings.Username $mount.RemoteFolder
+        if ($mount.Drive -cnotmatch '^[D-Z]$') { throw 'Choose a drive letter from D to Z.' }
+        if ($letters -contains $mount.Drive) { throw 'Choose a different letter for each drive.' }
+        $letters += $mount.Drive
+        if ($mount.Name -notin @('Steam Deck', 'Home', 'SD card', 'Root')) { throw 'Invalid drive name.' }
+    }
+}
+
+function Get-MountPath($Settings, $Mount) {
+    $server = $Settings.Username + '@' + $Settings.Address
+    if ([int]$Settings.Port -ne 22) { $server += '!' + ([int]$Settings.Port).ToString() }
+    $path = '\\sshfs.r\' + $server
+    $folder = $Mount.RemoteFolder.Trim('/').Replace('/', '\')
+    if ($folder) { $path += '\' + $folder }
+    return $path
+}
+
+function Get-SettingsPath {
+    return Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'SSH Switch\mount-windows.xml'
+}
+
+function Import-MountSettings([string] $Path) {
+    if (-not (Test-Path -LiteralPath $Path)) { return $null }
     try {
-        $null = [IO.Directory]::CreateDirectory($temporary)
-        $knownHosts = Join-Path $temporary 'known_hosts'
-        # Probe with the bundled client, with all authentication disabled. Some
-        # Windows ssh-keyscan versions cannot negotiate with current SteamOS.
-        # This key is trusted only after the user compares it with the Deck.
-        $scanInfo = New-Object Diagnostics.ProcessStartInfo
-        $scanInfo.FileName = $ssh
-        $scanArguments = @('-F', '/dev/null', '-T', '-p', ([int]$port).ToString(),
-            '-o', ('UserKnownHostsFile=' + (ConvertTo-SshPath $knownHosts)),
-            '-o', 'GlobalKnownHostsFile=/dev/null', '-o', 'StrictHostKeyChecking=accept-new',
-            '-o', 'HashKnownHosts=no', '-o', 'HostKeyAlgorithms=ssh-ed25519',
-            '-o', 'PreferredAuthentications=none', '-o', 'BatchMode=yes',
-            '-o', 'ConnectTimeout=10', '-s', "${username}@$address", 'sftp')
-        $scanInfo.Arguments = ($scanArguments | ForEach-Object { ConvertTo-NativeArgument $_ }) -join ' '
-        $scanInfo.UseShellExecute = $false
-        $scanInfo.CreateNoWindow = $true
-        $scanInfo.RedirectStandardInput = $true
-        $scanInfo.RedirectStandardOutput = $true
-        $scanInfo.RedirectStandardError = $true
-        $scan = [Diagnostics.Process]::Start($scanInfo)
-        try {
-            $scan.StandardInput.Close()
-            $scanOutput = $scan.StandardOutput.ReadToEndAsync()
-            $scanError = $scan.StandardError.ReadToEndAsync()
-            if (-not $scan.WaitForExit(15000)) { throw 'The Deck did not respond. Check its address and that SSH is enabled.' }
-            $null = $scanOutput.GetAwaiter().GetResult()
-            $null = $scanError.GetAwaiter().GetResult()
-        } finally {
-            if (-not $scan.HasExited) { $scan.Kill(); $scan.WaitForExit() }
-            $scan.Dispose()
+        $settings = Import-Clixml -LiteralPath $Path
+        Test-MountSettings $settings
+        if ($settings.Credential -isnot [Management.Automation.PSCredential] -or
+            $settings.Credential.UserName -cne $settings.Username -or $settings.Credential.Password.Length -eq 0) {
+            throw 'Invalid saved credential.'
         }
-        if (-not (Test-Path -LiteralPath $knownHosts)) { throw 'Could not read the Deck host key. Check its address, port, and that SSH is enabled.' }
-        $key = Get-ScannedKey ([IO.File]::ReadAllLines($knownHosts))
-        Write-Host "SSH fingerprint (Ed25519): $($key.Fingerprint)"
-        if ((Read-Host 'Does this exactly match the fingerprint on your Deck? Type yes to connect') -cne 'yes') { throw 'Connection cancelled.' }
-        $arguments = Get-MountArguments $address $port $username $remote $drive $knownHosts
-        $start = New-SshfsStartInfo $sshfs $arguments
-        $password = Read-Host 'Deck account password' -AsSecureString
-        if ($password.Length -eq 0) { throw 'The password cannot be blank.' }
-        $process = [Diagnostics.Process]::Start($start)
-        $mountOutput = $process.StandardOutput.ReadToEndAsync()
-        $mountError = $process.StandardError.ReadToEndAsync()
-        $pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($password)
-        $bytes = $null
-        try {
-            $bytes = [Text.Encoding]::UTF8.GetBytes([Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer) + "`n")
-            $process.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length)
-            $process.StandardInput.BaseStream.Flush()
-        } finally {
-            if ($bytes) { [Array]::Clear($bytes, 0, $bytes.Length) }
-            [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer)
-            $password.Dispose()
-            $password = $null
-        }
-        $process.StandardInput.Close()
-        $deadline = [DateTime]::UtcNow.AddSeconds(20)
-        while (-not $process.HasExited -and -not [IO.Directory]::Exists("$drive\") -and [DateTime]::UtcNow -lt $deadline) {
-            Start-Sleep -Milliseconds 200
-        }
-        if ($process.HasExited -or -not [IO.Directory]::Exists("$drive\")) {
-            $timedOut = -not $process.HasExited
-            if ($timedOut) { $process.Kill(); $process.WaitForExit() }
-            $detail = if ($mountError.Wait(2000)) { $mountError.Result.Trim() } else { '' }
-            if (-not $detail -and $mountOutput.Wait(2000)) { $detail = $mountOutput.Result.Trim() }
-            if (-not $detail) { $detail = if ($timedOut) { 'Connection timed out.' } else { "SSHFS exited with code $($process.ExitCode)." } }
-            throw "Mount failed: $detail"
-        }
-        Write-Host "Mounted at $drive\ - keep this window open."
-        $null = Read-Host 'Close files on the drive, then press Enter to disconnect'
+        return $settings
+    } catch {
+        throw "Cannot read saved settings for this Windows account. Run mount-windows.cmd -Configure to set up again."
+    }
+}
+
+function Save-MountSettings($Settings, [string] $Path) {
+    # Export-Clixml encrypts PSCredential with Windows DPAPI for this account/PC.
+    # Keep personal connection data outside the downloaded script/repository.
+    $null = [IO.Directory]::CreateDirectory((Split-Path -Parent $Path))
+    $temporary = $Path + '.' + [guid]::NewGuid().ToString('N') + '.tmp'
+    try {
+        $Settings | Export-Clixml -LiteralPath $temporary -Depth 5 -Encoding UTF8
+        if ([IO.File]::Exists($Path)) { [IO.File]::Replace($temporary, $Path, [NullString]::Value) }
+        else { [IO.File]::Move($temporary, $Path) }
     } finally {
-        # This foreground SSHFS instance owns the drive. Terminating only our
-        # retained process releases it; sshfs_sync prevents deferred write caching.
-        if ($process) {
-            if (-not $process.HasExited) { $process.Kill(); $process.WaitForExit() }
-            $process.Dispose()
-        }
-        if ($password) { $password.Dispose() }
-        if (Test-Path -LiteralPath $temporary) {
-            # Delete only our known file and then the empty temporary directory.
-            Remove-Item -LiteralPath (Join-Path $temporary 'known_hosts') -ErrorAction SilentlyContinue
-            [IO.Directory]::Delete($temporary)
+        if ([IO.File]::Exists($temporary)) { [IO.File]::Delete($temporary) }
+    }
+}
+
+function Get-DriveTarget([string] $Letter) {
+    $drive = Get-PSDrive -Name $Letter -ErrorAction SilentlyContinue
+    if ($drive) {
+        if ($drive.DisplayRoot) { return $drive.DisplayRoot }
+        return $drive.Root
+    }
+    # Disconnected persistent mappings may not appear in Get-PSDrive.
+    $remembered = Get-ItemProperty -LiteralPath "HKCU:\Network\$Letter" -ErrorAction SilentlyContinue
+    if ($remembered) { return $remembered.RemotePath }
+    if ([IO.DriveInfo]::GetDrives().Name -contains "${Letter}:\") { return "${Letter}:\" }
+    return $null
+}
+
+function Connect-Mounts($Settings) {
+    Test-MountSettings $Settings
+    # Check every letter before making any changes. Never replace other drives.
+    foreach ($mount in $Settings.Mounts) {
+        $target = Get-DriveTarget $mount.Drive
+        $path = Get-MountPath $Settings $mount
+        if ($target -and $target -cne $path) {
+            throw "$($mount.Drive): is already in use. Run mount-windows.cmd -Configure and choose another letter."
         }
     }
-    Write-Host 'Disconnected.'
+    foreach ($mount in $Settings.Mounts) {
+        $letter = $mount.Drive
+        $path = Get-MountPath $Settings $mount
+        $target = Get-DriveTarget $letter
+        if ($target -and $target -cne $path) { throw "${letter}: is already in use." }
+        if ($target -and (Test-Path -LiteralPath "${letter}:\" -ErrorAction SilentlyContinue)) {
+            Write-Host "$($mount.Name) is already mounted at ${letter}:\"
+            continue
+        }
+        try {
+            # Reconnect only a disconnected mapping to this exact destination.
+            if ($target) {
+                & net.exe use "${letter}:" /delete /y | Out-Null
+                if ($LASTEXITCODE -ne 0) { throw "Could not disconnect the previous mapping (Windows exit code $LASTEXITCODE)." }
+            }
+            $null = New-PSDrive -Name $letter -PSProvider FileSystem -Root $path `
+                -Credential $Settings.Credential -Persist -Scope Global -ErrorAction Stop
+        } catch {
+            throw "Could not mount $($mount.Name) at ${letter}: $($_.Exception.Message) Check the address, password and folder. To change saved settings, run mount-windows.cmd -Configure."
+        }
+        Write-Host "$($mount.Name) mounted at ${letter}:\"
+    }
+}
+
+function Mount-SteamDeck([switch] $Configure) {
+    if ($env:OS -ne 'Windows_NT') { throw 'Use mount-linux.sh or mount-macos.sh on this computer.' }
+    $null = Initialize-MountDependencies
+    $settingsPath = Get-SettingsPath
+    $settings = $null
+    $save = $false
+    try {
+        if (-not $Configure) { $settings = Import-MountSettings $settingsPath }
+        if ($settings) {
+            Write-Host "Using saved settings for $($settings.Address)."
+        } else {
+            $settings = Read-MountSettings
+            Test-MountSettings $settings
+            $password = Read-Host 'Deck account password' -AsSecureString
+            if ($password.Length -eq 0) { $password.Dispose(); throw 'The password cannot be blank.' }
+            $settings.Credential = New-Object Management.Automation.PSCredential($settings.Username, $password)
+            $save = Read-YesNo 'Save settings and password for automatic mounting next time?' $true
+        }
+        Connect-Mounts $settings
+        if ($save) {
+            Save-MountSettings $settings $settingsPath
+            Write-Host "Settings saved to $settingsPath (password encrypted for your Windows account)."
+        } elseif ($Configure -and (Test-Path -LiteralPath $settingsPath)) {
+            # Choosing not to save during reconfiguration also forgets old data.
+            Remove-Item -LiteralPath $settingsPath
+        }
+        Write-Host 'You can close this window. To disconnect, right-click the drive in File Explorer > Disconnect.'
+    } finally {
+        if ($settings -and $settings.Credential) { $settings.Credential.Password.Dispose() }
+    }
 }
 
 if ($MyInvocation.InvocationName -ne '.') {
-    try { Mount-SteamDeck }
+    try { Mount-SteamDeck -Configure:$Configure }
     catch { [Console]::Error.WriteLine('SSH Switch: ' + $_.Exception.Message); exit 1 }
 }
