@@ -72,17 +72,39 @@ $home_ = Read-MountSettings
 Test-MountSettings $home_
 Assert-True ((Get-MountPath $home_ $home_.Mounts[0]) -ceq '\\sshfs.r\deck@steamdeck.local\home\deck') 'A typed remote folder must still be used.'
 
-# The plugin lists IPv6 addresses, but a UNC path cannot carry their colons.
-# Refuse one at the prompt it was typed at, and name what to use instead.
-Set-Answers @('2a04:201:74de:f300:3e22:7fff:feae:2543')
-$ipv6Error = ''
-try { Read-MountSettings } catch { $ipv6Error = $_.Exception.Message }
-Assert-True ($ipv6Error -match 'IPv6') 'An IPv6 address must be named in the error.'
-Assert-True ($ipv6Error -match 'steamdeck\.local') 'The error must point at a usable hostname.'
-Assert-True ($script:prompts.Count -eq 1) 'A bad address must fail at its own prompt, not after the rest.'
-Assert-Throws { Test-AddressInput 'fe80::1' }
+# A UNC name component cannot hold the colons of an IPv6 literal, so the address
+# is carried in Microsoft's ipv6-literal.net form, which sshfs resolves back.
+Test-AddressInput '2a04:201:74de:f300:3e22:7fff:feae:2543'
 Test-AddressInput 'steamdeck.local'
 Test-AddressInput '192.0.2.10'
+Assert-True ((ConvertTo-MountHost '2a04:201:74de:f300:3e22:7fff:feae:2543') -ceq
+    '2a04-201-74de-f300-3e22-7fff-feae-2543.ipv6-literal.net') 'Incorrect IPv6 literal transform.'
+Assert-True ((ConvertTo-MountHost 'steamdeck.local') -ceq 'steamdeck.local') 'A hostname must pass through unchanged.'
+Assert-True ((ConvertTo-MountHost '192.0.2.10') -ceq '192.0.2.10') 'An IPv4 address must pass through unchanged.'
+
+# Link-local needs a %zone naming an interface on *this* machine, which the
+# Deck cannot know, so it stays refused rather than silently mounting nothing.
+Assert-Throws { Test-AddressInput 'fe80::3e22:7fff:feae:2543' }
+Assert-Throws { Test-AddressInput 'fe80::1%wlan0' }
+Assert-Throws { Test-AddressInput '2a04:201::1%4' }
+Assert-Throws { Test-AddressInput 'not:valid:ipv6' }
+
+$v6 = [pscustomobject]@{ Version = 1; Address = '2a04:201:74de:f300:3e22:7fff:feae:2543'; Port = '22'
+    Username = 'deck'; Credential = $null
+    Mounts = @([pscustomobject]@{ Name = 'Steam Deck'; RemoteFolder = '/'; Drive = 'S' }) }
+Test-MountSettings $v6
+$v6Path = Get-MountPath $v6 $v6.Mounts[0]
+Assert-True ($v6Path -ceq '\\sshfs.r\deck@2a04-201-74de-f300-3e22-7fff-feae-2543.ipv6-literal.net') 'Incorrect IPv6 mount path.'
+# The record parser reads that path back when unmounting; it must still validate.
+Assert-True ($v6Path -cmatch '^\\\\sshfs\.r\\([^@\\]+)@([^!\\]+)(?:!([0-9]+))?(\\.*)?$') 'IPv6 path must match the unmount record parser.'
+Test-ConnectionInput $Matches[2] '22' $Matches[1] '/'
+
+# A malformed address still fails at its own prompt, not after the rest.
+Set-Answers @('bad;address')
+$addrError = ''
+try { Read-MountSettings } catch { $addrError = $_.Exception.Message }
+Assert-True ($addrError -ne '') 'A malformed address must be refused.'
+Assert-True ($script:prompts.Count -eq 1) 'A bad address must fail at its own prompt, not after the rest.'
 Set-Answers @('')
 Assert-True (Read-YesNo 'Save?' $true) 'Saving must default to Yes.'
 Set-Answers @('invalid', 'NO')

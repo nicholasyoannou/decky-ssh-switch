@@ -40,7 +40,7 @@ The mounting helpers are included in [GitHub Releases](https://github.com/nichol
 | **[Linux](https://github.com/nicholasyoannou/decky-ssh-switch/releases/latest/download/ssh-switch-mount-linux.zip)** | Run `bash mount-linux.sh` in the extracted folder |
 | **[macOS](https://github.com/nicholasyoannou/decky-ssh-switch/releases/latest/download/ssh-switch-mount-macos.zip)** | Run `bash mount-macos.sh` in the extracted folder |
 
-The address defaults to `steamdeck.local`, resolved over mDNS — built in on Windows and macOS, and provided by `nss-mdns` or systemd-resolved on Linux. If that name does not resolve, enter the IPv4 address from **Connect from computer**. The helpers cannot take an IPv6 address: sshfs reads the colons as the host/path separator, and a Windows UNC name component cannot contain them at all.
+Press Enter at the address prompt to use `steamdeck.local`. If that name does not resolve, enter an address from **Connect from computer** instead.
 
 Unmount helpers leave saved settings, local folders and unrelated drives alone. If a mount is busy, close files using it and retry.
 
@@ -75,6 +75,19 @@ Keep the `.cmd` and `.ps1` files together. SSHFS-Win's network-drive provider do
 3. Enter the connection details shown on the Deck and choose a local folder. Compare the SSH fingerprint when prompted, then enter your Deck password.
 
 **Disconnect:** run `bash unmount-macos.sh`. Mount locations are remembered; passwords are not saved.
+
+<details>
+<summary>Which addresses the helpers accept</summary>
+
+`steamdeck.local` is resolved over mDNS, which is built in on Windows and macOS and comes from `nss-mdns` or systemd-resolved on Linux.
+
+Both address families work. IPv6 is bracketed for sshfs on Linux and macOS, and converted to Microsoft's `ipv6-literal.net` form on Windows, since a UNC name component cannot contain colons.
+
+Link-local addresses (`fe80::`) are refused. They only work alongside a `%zone` naming an interface on the computer you are mounting from, which is not something the Deck can tell you.
+
+SteamOS turns IPv6 off on the Wi-Fi interface whenever it reconnects, so an IPv6 address only stays usable if something keeps it enabled.
+
+</details>
 
 ## Build and test
 

@@ -10,10 +10,23 @@ prompt() {
 }
 
 validate_address() {
-    # SSH Switch lists the Deck's IPv6 addresses, but sshfs splits host from path
-    # on a colon, so one pasted here must be redirected, not merely rejected.
-    [[ $1 != *:* ]] || { fail 'sshfs cannot use an IPv6 address here. Use a hostname such as steamdeck.local, or the IPv4 address shown in SSH Switch.'; return 1; }
+    if [[ $1 == *:* || $1 == *%* ]]; then
+        # Hexadecimal groups only, so nothing reaches sshfs that a shell or an
+        # ssh option could reinterpret. A %zone names an interface on this
+        # computer, and a link-local address is meaningless without one.
+        local colons=${1//[^:]/}
+        [[ $1 =~ ^[0-9A-Fa-f:]+$ ]] || { fail 'That is not a usable IPv6 address. Copy one of the addresses shown in SSH Switch.'; return 1; }
+        [[ $1 == *::* || ${#colons} == 7 ]] || { fail 'That is not a usable IPv6 address. Copy one of the addresses shown in SSH Switch.'; return 1; }
+        [[ ! $1 =~ ^[Ff][Ee][89AaBb] ]] || { fail 'A link-local IPv6 address cannot be used from another computer. Use the other address shown in SSH Switch, or a hostname such as steamdeck.local.'; return 1; }
+        return 0
+    fi
     [[ $1 =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]] || { fail 'Enter an IPv4 address or hostname, without a URL or username.'; return 1; }
+}
+
+sshfs_target() {
+    # sshfs splits host from path on the first colon, so an IPv6 literal needs
+    # the bracketed form its manual page documents.
+    if [[ $2 == *:* ]]; then printf '%s@[%s]:%s' "$1" "$2" "$3"; else printf '%s@%s:%s' "$1" "$2" "$3"; fi
 }
 
 validate_connection() {
@@ -164,7 +177,7 @@ mount_main() {
     # SSH owns the password/key prompt and known_hosts verification. Never use eval
     # or put the password in command arguments. Disable user SSH config rewriting
     # the address/port or supplying an unrelated proxy for this direct connection.
-    sshfs "$username@$address:$remote" "$folder" -p "$((10#$port))" \
+    sshfs "$(sshfs_target "$username" "$address" "$remote")" "$folder" -p "$((10#$port))" \
         -o ssh_command='ssh -F /dev/null' -o StrictHostKeyChecking=ask \
         -o HostKeyAlgorithms=ssh-ed25519 -o ConnectTimeout=10 \
         -o ServerAliveInterval=15 -o ServerAliveCountMax=3

@@ -105,17 +105,26 @@ else:
                 self.assertNotEqual(result.returncode, 0)
                 self.assertEqual(calls, [])
 
-    def test_ipv6_address_is_refused_with_a_usable_alternative(self):
-        # SSH Switch lists IPv6 addresses, but sshfs splits host from path on a
-        # colon, so one pasted here must be named and redirected, not just rejected.
-        result, calls, _, _ = self.run_mount(address="2a04:201:74de:f300:3e22:7fff:feae:2543")
-        self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(calls, [])
-        self.assertIn("IPv6", result.stderr)
-        self.assertIn("steamdeck.local", result.stderr)
+    def test_ipv6_address_is_bracketed_for_sshfs(self):
+        # sshfs splits host from path on the first colon, so an IPv6 literal only
+        # survives inside brackets, the form its manual page documents.
+        address = "2a04:201:74de:f300:3e22:7fff:feae:2543"
+        result, calls, folder, remote = self.run_mount(address=address)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][1], f"deck@[{address}]:{remote}")
+
+    def test_unusable_ipv6_addresses_never_reach_sshfs(self):
+        # Link-local needs a %zone naming an interface on this computer, which is
+        # not what the Deck shows, so it is refused rather than mounting nothing.
+        for address in ("fe80::3e22:7fff:feae:2543", "fe80::1%wlan0", "2a04:201::1%4", "not:valid:ipv6"):
+            with self.subTest(address=address):
+                result, calls, _, _ = self.run_mount(address=address)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(calls, [])
 
     def test_a_bad_address_fails_before_the_later_prompts(self):
-        result, _, _, _ = self.run_mount(address="2a04:201:74de:f300:3e22:7fff:feae:2543")
+        result, _, _, _ = self.run_mount(address="bad;address")
         self.assertNotIn("Remote folder", result.stdout)
         self.assertNotIn("Local mount folder", result.stdout)
 

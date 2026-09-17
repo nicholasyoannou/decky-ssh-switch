@@ -16,10 +16,27 @@ function Read-Default([string] $Label, [string] $Default) {
 }
 
 function Test-AddressInput([string] $Address) {
-    # SSH Switch lists the Deck's IPv6 addresses, but a mount is a UNC path and
-    # a UNC name component cannot hold their colons, so say what works instead.
-    if ($Address -match ':') { throw 'SSHFS-Win cannot mount an IPv6 address. Use a hostname such as steamdeck.local, or the IPv4 address shown in SSH Switch.' }
+    if ($Address -match '[:%]') {
+        $parsed = [Net.IPAddress]::Any
+        if (-not [Net.IPAddress]::TryParse($Address, [ref] $parsed) -or
+            $parsed.AddressFamily -ne [Net.Sockets.AddressFamily]::InterNetworkV6) {
+            throw 'That is not a usable IPv6 address. Copy one of the addresses shown in SSH Switch.'
+        }
+        # A link-local address only means anything alongside a %zone naming an
+        # interface on this computer, which is not what the Deck displays.
+        if ($parsed.IsIPv6LinkLocal -or $Address -match '%') {
+            throw 'A link-local IPv6 address cannot be used from another computer. Use the other address shown in SSH Switch, or a hostname such as steamdeck.local.'
+        }
+        return
+    }
     if ($Address -cnotmatch '^[a-zA-Z0-9][a-zA-Z0-9.-]*$') { throw 'Enter an IPv4 address or hostname, without a URL or username.' }
+}
+
+function ConvertTo-MountHost([string] $Address) {
+    # A UNC name component cannot contain colons, so an IPv6 literal travels in
+    # Microsoft's ipv6-literal.net form, which the SSH client resolves back.
+    if ($Address -notmatch ':') { return $Address }
+    return $Address.Replace(':', '-') + '.ipv6-literal.net'
 }
 
 function Test-ConnectionInput([string] $Address, [string] $Port, [string] $Username, [string] $RemoteFolder) {
@@ -156,7 +173,7 @@ function Test-MountSettings($Settings) {
 }
 
 function Get-MountPath($Settings, $Mount) {
-    $server = $Settings.Username + '@' + $Settings.Address
+    $server = $Settings.Username + '@' + (ConvertTo-MountHost $Settings.Address)
     if ([int]$Settings.Port -ne 22) { $server += '!' + ([int]$Settings.Port).ToString() }
     $path = '\\sshfs.r\' + $server
     $folder = $Mount.RemoteFolder.Trim('/').Replace('/', '\')
