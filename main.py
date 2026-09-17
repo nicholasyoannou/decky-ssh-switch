@@ -149,7 +149,7 @@ async def _connection_info():
     if not ports or not fingerprint:
         raise RuntimeError("No SSH port or Ed25519 host key was found. Enable SSH, then reopen this dialog.")
 
-    code, output, _ = await _run("/usr/bin/ip", "-j", "-4", "addr", "show", "scope", "global")
+    code, output, _ = await _run("/usr/bin/ip", "-j", "addr", "show", "scope", "global")
     if code != 0:
         raise RuntimeError("Could not read the Deck's network addresses.")
     addresses = []
@@ -157,13 +157,19 @@ async def _connection_info():
         if "UP" not in interface.get("flags", []):
             continue
         for entry in interface.get("addr_info", []):
-            address = entry.get("local", "")
-            try:
-                parsed = ipaddress.IPv4Address(address)
-            except ipaddress.AddressValueError:
+            # Temporary (RFC 4941) and deprecated IPv6 addresses stop working
+            # after a while, so they are never worth copying into a command.
+            if entry.get("scope") != "global" or entry.get("temporary") or entry.get("deprecated"):
                 continue
-            if entry.get("scope") == "global" and not parsed.is_loopback and not parsed.is_link_local:
-                addresses.append({"address": address, "interface": interface["ifname"]})
+            try:
+                parsed = ipaddress.ip_address(entry.get("local", ""))
+            except ValueError:
+                continue
+            if not parsed.is_loopback and not parsed.is_link_local:
+                addresses.append({"address": str(parsed), "interface": interface["ifname"],
+                                  "family": "ipv6" if parsed.version == 6 else "ipv4"})
+    # The mount helpers take an IPv4 address or a hostname, so IPv4 is listed first.
+    addresses.sort(key=lambda item: item["family"])
 
     folders = [{"label": "Home", "path": home}]
     code, output, _ = await _run("/usr/bin/findmnt", "--json", "--list", "--output", "TARGET")
