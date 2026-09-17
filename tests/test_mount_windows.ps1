@@ -55,14 +55,22 @@ function Read-Host([string] $Prompt, [switch] $AsSecureString) {
     return $answer
 }
 
-# Pressing Enter throughout creates exactly one drive at S: on steamdeck.
+# Pressing Enter throughout creates exactly one drive at S: on steamdeck,
+# holding the whole Deck rather than only the account's home folder.
 Set-Answers @('', '', '', '', '', '')
 $single = Read-MountSettings
 Test-MountSettings $single
 Assert-True ($single.Address -ceq 'steamdeck') 'Default hostname changed.'
 Assert-True ($single.Mounts.Count -eq 1) 'Extra drives must be opt-in.'
 Assert-True ($single.Mounts[0].Drive -ceq 'S') 'Default drive changed.'
-Assert-True ((Get-MountPath $single $single.Mounts[0]) -ceq '\\sshfs.r\deck@steamdeck\home\deck') 'Incorrect single-drive path.'
+Assert-True ($single.Mounts[0].RemoteFolder -ceq '/') 'One drive must default to the whole filesystem.'
+Assert-True ((Get-MountPath $single $single.Mounts[0]) -ceq '\\sshfs.r\deck@steamdeck') 'Incorrect single-drive path.'
+
+# A home folder is still reachable by typing it at the prompt.
+Set-Answers @('', '', '', '', '/home/deck', '')
+$home_ = Read-MountSettings
+Test-MountSettings $home_
+Assert-True ((Get-MountPath $home_ $home_.Mounts[0]) -ceq '\\sshfs.r\deck@steamdeck\home\deck') 'A typed remote folder must still be used.'
 Set-Answers @('')
 Assert-True (Read-YesNo 'Save?' $true) 'Saving must default to Yes.'
 Set-Answers @('invalid', 'NO')

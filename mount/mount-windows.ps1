@@ -121,7 +121,9 @@ function Read-MountSettings {
         if ($sd) { $mounts += Read-Mount 'SD card' $sd 'Y' }
         $mounts += Read-Mount 'Root' '/' 'Z'
     } else {
-        $remote = Read-Default 'Remote folder' "/home/$username"
+        # One drive holds the whole Deck, so the home folder and the SD card are
+        # both reachable from it without mapping a letter to each.
+        $remote = Read-Default 'Remote folder' '/'
         $mounts += Read-Mount 'Steam Deck' $remote 'S'
     }
     return [pscustomobject]@{

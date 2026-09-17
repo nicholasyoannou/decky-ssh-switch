@@ -45,7 +45,7 @@ Unmount helpers leave saved settings, local folders and unrelated drives alone. 
 ### Windows
 
 1. Double-click `mount-windows.cmd`. It opens PowerShell and installs missing [SSHFS-Win and WinFsp](https://github.com/winfsp/sshfs-win) dependencies through WinGet. Approve the administrator prompt if shown.
-2. Enter your connection details. The defaults are `steamdeck` and one persistent `S:` drive. Separate Home, SD card and Root drives are optional and default to **No**.
+2. Enter your connection details. The defaults are `steamdeck` and one persistent `S:` drive holding the whole Deck from `/`, so the home folder and the SD card are both inside it. Enter a different remote folder to narrow it. Separate Home, SD card and Root drives are optional and default to **No**.
 3. Choose whether to **Save settings and password** (default **Yes**). The password is encrypted for your Windows account on this PC. Later runs reconnect using the saved setup.
 
 - **Disconnect:** double-click `unmount-windows.cmd`. Closing the mounting script leaves the drives connected.
