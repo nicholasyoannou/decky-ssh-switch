@@ -17,7 +17,7 @@ const getStatus = callable<[], Status>("get_status");
 interface ConnectionInfo {
   username: string;
   hostname: string;
-  addresses: { address: string; interface: string; family: "ipv4" | "ipv6" }[];
+  addresses: { address: string; interface: string; family: "ipv4" | "ipv6"; prefix: number; temporary: boolean }[];
   ports: number[];
   folders: { label: string; path: string }[];
   fingerprint: string;
@@ -34,6 +34,25 @@ const passwordInputProps = { type: "password", autoComplete: "new-password" } as
 function sameStatus(previous: Status | null, next: Status) {
   return previous !== null && (Object.keys(next) as (keyof Status)[])
     .every((key) => previous[key] === next[key]);
+}
+
+type Address = ConnectionInfo["addresses"][number];
+
+function AddressListDialog({ addresses, closeModal }: { addresses: Address[]; closeModal?: () => void }) {
+  return <ConfirmModal strTitle="All addresses" strOKButtonText="Back" bAlertDialog onOK={closeModal} onCancel={closeModal}>
+    <div style={{ fontSize: 14, lineHeight: 1.4, overflowWrap: "anywhere" }}>
+      {(["ipv4", "ipv6"] as const).map((family) => {
+        const rows = addresses.filter((item) => item.family === family);
+        return <div key={family} style={{ marginBottom: 12 }}>
+          <strong>{family === "ipv4" ? "IPv4" : "IPv6"} addresses</strong><br />
+          {rows.length ? rows.map((item) => <span key={`${item.interface}-${item.address}`}>
+            {item.interface}: <code>{item.address}/{item.prefix}</code>
+            {item.temporary && <span style={{ opacity: 0.7 }}> — temporary, rotates</span>}<br />
+          </span>) : <span style={{ opacity: 0.7 }}>None</span>}
+        </div>;
+      })}
+    </div>
+  </ConfirmModal>;
 }
 
 function InstructionsDialog({ closeParent, closeModal }: { closeParent?: () => void; closeModal?: () => void }) {
@@ -73,8 +92,9 @@ function ConnectionDialog({ closeModal }: { closeModal?: () => void }) {
     return () => { active = false; };
   }, []);
   const addresses = info?.addresses ?? [];
+  // A rotating address is kept out of the headline, but stays in the full list.
   const listed = (family: "ipv4" | "ipv6") => addresses
-    .filter((item) => item.family === family)
+    .filter((item) => item.family === family && !item.temporary)
     .map((item) => `${item.address} (${item.interface})`).join(", ");
   return <ConfirmModal
     strTitle="Connect from computer"
@@ -95,8 +115,10 @@ function ConnectionDialog({ closeModal }: { closeModal?: () => void }) {
         <p style={{ margin: "8px 0" }}><strong>Remote folder:</strong><br />{info.folders.map((folder) => <span key={folder.path}>{folder.label}: <code>{folder.path}</code><br /></span>)}</p>
         <p style={{ margin: "8px 0" }}><strong>SSH fingerprint (Ed25519):</strong><br /><code style={{ fontSize: 12 }}>{info.fingerprint}</code></p>
         <p style={{ margin: "8px 0" }}>Compare this fingerprint when prompted, then enter your Deck password.</p>
-        {/* Opens its own dialog, so this one stays short enough not to scroll. */}
+        {/* Each opens its own dialog, so this one stays short enough not to scroll. */}
         <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+          {addresses.length > 0 && <DialogButton style={{ fontSize: 13, padding: "6px 10px" }}
+            onClick={() => showModal(<AddressListDialog addresses={addresses} />)}>All addresses</DialogButton>}
           <DialogButton style={{ fontSize: 13, padding: "6px 10px" }}
             onClick={() => showModal(<InstructionsDialog closeParent={closeModal} />)}>How do I connect?</DialogButton>
         </div>

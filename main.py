@@ -157,9 +157,10 @@ async def _connection_info():
         if "UP" not in interface.get("flags", []):
             continue
         for entry in interface.get("addr_info", []):
-            # Temporary (RFC 4941) and deprecated IPv6 addresses stop working
-            # after a while, so they are never worth copying into a command.
-            if entry.get("scope") != "global" or entry.get("temporary") or entry.get("deprecated"):
+            # A deprecated address is no longer offered for new connections, so
+            # it would only ever mislead. Temporary (RFC 4941) ones still work
+            # but rotate, so they are kept and flagged rather than led with.
+            if entry.get("scope") != "global" or entry.get("deprecated"):
                 continue
             try:
                 parsed = ipaddress.ip_address(entry.get("local", ""))
@@ -167,9 +168,12 @@ async def _connection_info():
                 continue
             if not parsed.is_loopback and not parsed.is_link_local:
                 addresses.append({"address": str(parsed), "interface": interface["ifname"],
-                                  "family": "ipv6" if parsed.version == 6 else "ipv4"})
-    # The mount helpers take an IPv4 address or a hostname, so IPv4 is listed first.
-    addresses.sort(key=lambda item: item["family"])
+                                  "family": "ipv6" if parsed.version == 6 else "ipv4",
+                                  "prefix": int(entry.get("prefixlen", parsed.max_prefixlen)),
+                                  "temporary": bool(entry.get("temporary"))})
+    # The mount helpers take an IPv4 address or a hostname, so IPv4 is listed
+    # first, and a rotating address never leads its family.
+    addresses.sort(key=lambda item: (item["family"], item["temporary"]))
 
     folders = [{"label": "Home", "path": home}]
     code, output, _ = await _run("/usr/bin/findmnt", "--json", "--list", "--output", "TARGET")

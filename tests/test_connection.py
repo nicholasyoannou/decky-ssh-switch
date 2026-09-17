@@ -16,13 +16,13 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
         config = config if config is not None else "port 2222\nport 22\nport 22\nhostkey /test/ed25519\n"
         network = network if network is not None else [
             {"ifname": "wlan0", "flags": ["UP"], "addr_info": [
-                {"local": "192.0.2.10", "family": "inet", "scope": "global"},
-                {"local": "2001:db8::10", "family": "inet6", "scope": "global"},
-                {"local": "fd00::10", "family": "inet6", "scope": "global"},
-                {"local": "127.0.0.1", "family": "inet", "scope": "host"},
-                {"local": "169.254.1.1", "family": "inet", "scope": "global"},
-                {"local": "invalid", "family": "inet", "scope": "global"}]},
-            {"ifname": "offline", "flags": [], "addr_info": [{"local": "192.0.2.11", "family": "inet", "scope": "global"}]},
+                {"local": "192.0.2.10", "family": "inet", "scope": "global", "prefixlen": 24},
+                {"local": "2001:db8::10", "family": "inet6", "scope": "global", "prefixlen": 64},
+                {"local": "fd00::10", "family": "inet6", "scope": "global", "prefixlen": 64},
+                {"local": "127.0.0.1", "family": "inet", "scope": "host", "prefixlen": 8},
+                {"local": "169.254.1.1", "family": "inet", "scope": "global", "prefixlen": 16},
+                {"local": "invalid", "family": "inet", "scope": "global", "prefixlen": 24}]},
+            {"ifname": "offline", "flags": [], "addr_info": [{"local": "192.0.2.11", "family": "inet", "scope": "global", "prefixlen": 24}]},
         ]
         mounts = mounts if mounts is not None else {"filesystems": [{"target": "/home"}, {"target": "/run/media/deck/My SD"}]}
         run = AsyncMock(side_effect=[(config_code, config, ""), (0, json.dumps(network), ""), (mount_code, json.dumps(mounts), "")])
@@ -41,9 +41,9 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
     async def test_filters_addresses_and_reports_actual_ports_user_and_storage(self):
         info = await self.get_info()
         self.assertEqual(info["addresses"], [
-            {"address": "192.0.2.10", "interface": "wlan0", "family": "ipv4"},
-            {"address": "2001:db8::10", "interface": "wlan0", "family": "ipv6"},
-            {"address": "fd00::10", "interface": "wlan0", "family": "ipv6"}])
+            {"address": "192.0.2.10", "interface": "wlan0", "family": "ipv4", "prefix": 24, "temporary": False},
+            {"address": "2001:db8::10", "interface": "wlan0", "family": "ipv6", "prefix": 64, "temporary": False},
+            {"address": "fd00::10", "interface": "wlan0", "family": "ipv6", "prefix": 64, "temporary": False}])
         self.assertEqual(info["ports"], [22, 2222])
         self.assertEqual(info["username"], "custom")
         self.assertEqual(info["folders"], [{"label": "Home", "path": "/home/custom"}, {"label": "External storage", "path": "/run/media/deck/My SD"}])
@@ -60,25 +60,37 @@ class ConnectionTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("-4", self.addresses_call.args)
         self.assertNotIn("-6", self.addresses_call.args)
 
-    async def test_skips_ipv6_addresses_that_do_not_stay_reachable(self):
-        # Temporary (RFC 4941) addresses rotate and deprecated ones stop being
-        # offered, so neither is worth copying into an SSH command.
+    async def test_marks_temporary_addresses_and_drops_deprecated_ones(self):
+        # Temporary (RFC 4941) addresses rotate, so they are flagged rather than
+        # led with, but stay listed because the full list should match what the
+        # Deck actually holds. A deprecated address is no longer offered at all.
         info = await self.get_info(network=[{"ifname": "wlan0", "flags": ["UP"], "addr_info": [
-            {"local": "2001:db8::10", "family": "inet6", "scope": "global"},
-            {"local": "2001:db8::beef", "family": "inet6", "scope": "global", "temporary": True},
-            {"local": "2001:db8::dead", "family": "inet6", "scope": "global", "deprecated": True},
-            {"local": "fe80::1", "family": "inet6", "scope": "link"}]}])
-        self.assertEqual(info["addresses"], [{"address": "2001:db8::10", "interface": "wlan0", "family": "ipv6"}])
+            {"local": "2001:db8::10", "family": "inet6", "scope": "global", "prefixlen": 64},
+            {"local": "2001:db8::beef", "family": "inet6", "scope": "global", "prefixlen": 64, "temporary": True},
+            {"local": "2001:db8::dead", "family": "inet6", "scope": "global", "prefixlen": 64, "deprecated": True},
+            {"local": "fe80::1", "family": "inet6", "scope": "link", "prefixlen": 64}]}])
+        self.assertEqual(info["addresses"], [
+            {"address": "2001:db8::10", "interface": "wlan0", "family": "ipv6", "prefix": 64, "temporary": False},
+            {"address": "2001:db8::beef", "interface": "wlan0", "family": "ipv6", "prefix": 64, "temporary": True}])
 
     async def test_lists_ipv4_first_and_normalizes_ipv6(self):
         # The mount helpers take an IPv4 address or a hostname, so IPv4 leads
         # regardless of the order the kernel reports the addresses in.
         info = await self.get_info(network=[{"ifname": "end0", "flags": ["UP"], "addr_info": [
-            {"local": "2001:0db8:0000:0000:0000:0000:0000:0010", "family": "inet6", "scope": "global"},
-            {"local": "192.0.2.10", "family": "inet", "scope": "global"}]}])
+            {"local": "2001:0db8:0000:0000:0000:0000:0000:0010", "family": "inet6", "scope": "global", "prefixlen": 64},
+            {"local": "192.0.2.10", "family": "inet", "scope": "global", "prefixlen": 24}]}])
         self.assertEqual(info["addresses"], [
-            {"address": "192.0.2.10", "interface": "end0", "family": "ipv4"},
-            {"address": "2001:db8::10", "interface": "end0", "family": "ipv6"}])
+            {"address": "192.0.2.10", "interface": "end0", "family": "ipv4", "prefix": 24, "temporary": False},
+            {"address": "2001:db8::10", "interface": "end0", "family": "ipv6", "prefix": 64, "temporary": False}])
+
+    async def test_stable_addresses_lead_their_family(self):
+        # A rotating address must never be the one shown first for its family.
+        info = await self.get_info(network=[{"ifname": "wlan0", "flags": ["UP"], "addr_info": [
+            {"local": "2001:db8::beef", "family": "inet6", "scope": "global", "prefixlen": 64, "temporary": True},
+            {"local": "2001:db8::10", "family": "inet6", "scope": "global", "prefixlen": 64},
+            {"local": "192.0.2.10", "family": "inet", "scope": "global", "prefixlen": 24}]}])
+        self.assertEqual([item["address"] for item in info["addresses"]],
+                         ["192.0.2.10", "2001:db8::10", "2001:db8::beef"])
 
     async def test_failed_storage_listing_keeps_home(self):
         self.assertEqual(len((await self.get_info(mount_code=1))["folders"]), 1)
