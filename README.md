@@ -107,14 +107,14 @@ Release ZIPs are written to `release/`. Run `pnpm run clean` to remove generated
 Publish the contents of this `decky-ssh` directory as the repository root. The workflow is `.github/workflows/build-release.yml`.
 
 - Every branch push and pull request runs the tests, type-checks, builds and verifies all ZIPs. The archives and checksums are available as workflow artifacts for 14 days.
-- Pushing a version tag such as `v0.2.1` runs the same checks, then creates a GitHub Release containing the plugin, source and three mounting helper ZIPs, plus `SHA256SUMS`. The tag must match `package.json`.
+- Pushing a version tag such as `v0.2.2` runs the same checks, then creates a GitHub Release containing the plugin, source and three mounting helper ZIPs, plus `SHA256SUMS`. The tag must match `package.json`.
 - Tags such as `v0.2.0-beta.1` produce prereleases. The workflow can also be run manually; selecting a version tag enables publishing, while selecting a branch only builds artifacts.
 
 After committing and pushing this project to GitHub, publish the current version with:
 
 ```sh
-git tag v0.2.1
-git push origin v0.2.1
+git tag v0.2.2
+git push origin v0.2.2
 ```
 
 For subsequent releases, run `pnpm version patch` (or `minor` / `major`) in a clean Git checkout, then push the commit and generated tag with `git push origin HEAD --follow-tags`.
