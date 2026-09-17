@@ -1,5 +1,5 @@
 import { callable, definePlugin } from "@decky/api";
-import { ButtonItem, ConfirmModal, DialogButton, PanelSection, PanelSectionRow, TextField, ToggleField, showModal } from "@decky/ui";
+import { ButtonItem, ConfirmModal, DialogButton, Navigation, PanelSection, PanelSectionRow, TextField, ToggleField, showModal } from "@decky/ui";
 import { useEffect, useRef, useState } from "react";
 import { QR_MODULES, QR_PATH, QR_URL } from "./qr";
 
@@ -36,7 +36,7 @@ function sameStatus(previous: Status | null, next: Status) {
     .every((key) => previous[key] === next[key]);
 }
 
-function InstructionsDialog({ closeModal }: { closeModal?: () => void }) {
+function InstructionsDialog({ closeParent, closeModal }: { closeParent?: () => void; closeModal?: () => void }) {
   return <ConfirmModal strTitle="How do I connect?" strOKButtonText="Back" bAlertDialog onOK={closeModal} onCancel={closeModal}>
     <div style={{ fontSize: 14, lineHeight: 1.4, textAlign: "center" }}>
       {/* White plate and black modules regardless of theme, so the code stays scannable. */}
@@ -45,7 +45,18 @@ function InstructionsDialog({ closeModal }: { closeModal?: () => void }) {
         <rect x={-4} y={-4} width={QR_MODULES + 8} height={QR_MODULES + 8} fill="#ffffff" />
         <path d={QR_PATH} stroke="#000000" strokeWidth={1} fill="none" shapeRendering="crispEdges" />
       </svg>
-      <p style={{ margin: "8px 0", fontSize: 12 }}>Scan with your phone, or open<br /><code>{QR_URL}</code></p>
+      <p style={{ margin: "8px 0", fontSize: 12 }}>Scan with your phone, or open it here:</p>
+      {/* Steam's own browser, so the page opens without leaving Game Mode. This
+          screen closes first; the dialog behind it is only the top modal once
+          that has happened, so its close waits a tick rather than being
+          dropped, and the browser opens with nothing left stacked over it. */}
+      <DialogButton
+        style={{ fontSize: 12, padding: "6px 10px", overflowWrap: "anywhere" }}
+        onClick={() => {
+          closeModal?.();
+          setTimeout(() => { closeParent?.(); Navigation.NavigateToExternalWeb(QR_URL); }, 0);
+        }}
+      >{QR_URL}</DialogButton>
     </div>
   </ConfirmModal>;
 }
@@ -87,7 +98,7 @@ function ConnectionDialog({ closeModal }: { closeModal?: () => void }) {
         {/* Opens its own dialog, so this one stays short enough not to scroll. */}
         <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
           <DialogButton style={{ fontSize: 13, padding: "6px 10px" }}
-            onClick={() => showModal(<InstructionsDialog />)}>How do I connect?</DialogButton>
+            onClick={() => showModal(<InstructionsDialog closeParent={closeModal} />)}>How do I connect?</DialogButton>
         </div>
       </>}
     </div>
