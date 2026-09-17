@@ -1,6 +1,7 @@
 import { callable, definePlugin } from "@decky/api";
-import { ButtonItem, ConfirmModal, PanelSection, PanelSectionRow, TextField, ToggleField, showModal } from "@decky/ui";
+import { ButtonItem, ConfirmModal, DialogButton, PanelSection, PanelSectionRow, TextField, ToggleField, showModal } from "@decky/ui";
 import { useEffect, useRef, useState } from "react";
+import { QR_MODULES, QR_PATH, QR_URL } from "./qr";
 
 interface Status {
   username: string;
@@ -35,6 +36,20 @@ function sameStatus(previous: Status | null, next: Status) {
     .every((key) => previous[key] === next[key]);
 }
 
+function InstructionsDialog({ closeModal }: { closeModal?: () => void }) {
+  return <ConfirmModal strTitle="How do I connect?" strOKButtonText="Back" bAlertDialog onOK={closeModal} onCancel={closeModal}>
+    <div style={{ fontSize: 14, lineHeight: 1.4, textAlign: "center" }}>
+      {/* White plate and black modules regardless of theme, so the code stays scannable. */}
+      <svg viewBox={`-4 -4 ${QR_MODULES + 8} ${QR_MODULES + 8}`} width="190" height="190"
+        role="img" aria-label="QR code linking to the mounting instructions">
+        <rect x={-4} y={-4} width={QR_MODULES + 8} height={QR_MODULES + 8} fill="#ffffff" />
+        <path d={QR_PATH} stroke="#000000" strokeWidth={1} fill="none" shapeRendering="crispEdges" />
+      </svg>
+      <p style={{ margin: "8px 0", fontSize: 12 }}>Scan with your phone, or open<br /><code>{QR_URL}</code></p>
+    </div>
+  </ConfirmModal>;
+}
+
 function ConnectionDialog({ closeModal }: { closeModal?: () => void }) {
   const [info, setInfo] = useState<ConnectionInfo | null>(null);
   const [error, setError] = useState("");
@@ -47,7 +62,9 @@ function ConnectionDialog({ closeModal }: { closeModal?: () => void }) {
     return () => { active = false; };
   }, []);
   const addresses = info?.addresses ?? [];
-  const ipv6Only = addresses.length > 0 && addresses.every((item) => item.family === "ipv6");
+  const listed = (family: "ipv4" | "ipv6") => addresses
+    .filter((item) => item.family === family)
+    .map((item) => `${item.address} (${item.interface})`).join(", ");
   return <ConfirmModal
     strTitle="Connect from computer"
     strDescription="Run the mounting script on a computer on the same network."
@@ -58,14 +75,20 @@ function ConnectionDialog({ closeModal }: { closeModal?: () => void }) {
   >
     <div style={{ fontSize: 14, lineHeight: 1.4, overflowWrap: "anywhere" }}>
       {error ? <p role="alert">{error}</p> : !info ? <p role="status">Loading connection details…</p> : <>
-        <p style={{ margin: "8px 0" }}><strong>Address:</strong> {addresses.length
-          ? addresses.map((item) => `${item.address} (${item.interface})`).join(", ")
-          : `${info.hostname} — no network address found; check your network.`}<br />
+        <p style={{ margin: "8px 0" }}>
+          {addresses.length ? <>
+            {listed("ipv4") && <><strong>IPv4:</strong> {listed("ipv4")}<br /></>}
+            {listed("ipv6") && <><strong>IPv6:</strong> {listed("ipv6")}<br /></>}
+          </> : <><strong>Address:</strong> {info.hostname} — no network address found; check your network.<br /></>}
           <strong>Port:</strong> {info.ports.join(", ")} <span style={{ marginLeft: 16 }}><strong>Username:</strong> {info.username}</span></p>
-        {ipv6Only && <p style={{ margin: "8px 0" }}>The mounting scripts need an IPv4 address or a hostname. Try <code>{info.hostname}</code> if your network resolves it.</p>}
         <p style={{ margin: "8px 0" }}><strong>Remote folder:</strong><br />{info.folders.map((folder) => <span key={folder.path}>{folder.label}: <code>{folder.path}</code><br /></span>)}</p>
         <p style={{ margin: "8px 0" }}><strong>SSH fingerprint (Ed25519):</strong><br /><code style={{ fontSize: 12 }}>{info.fingerprint}</code></p>
         <p style={{ margin: "8px 0" }}>Compare this fingerprint when prompted, then enter your Deck password.</p>
+        {/* Opens its own dialog, so this one stays short enough not to scroll. */}
+        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+          <DialogButton style={{ fontSize: 13, padding: "6px 10px" }}
+            onClick={() => showModal(<InstructionsDialog />)}>How do I connect?</DialogButton>
+        </div>
       </>}
     </div>
   </ConfirmModal>;

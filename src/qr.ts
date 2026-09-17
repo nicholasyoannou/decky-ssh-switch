@@ -1,0 +1,9 @@
+// Static QR code for the mounting instructions. Stored as SVG path data so the
+// plugin needs no QR library at runtime and no network access to render it.
+// The short URL redirects to the README section, so the destination can change
+// without shipping a new build. Generated with segno (error correction M,
+// version 3, 29x29 modules); each horizontal run of dark modules is one
+// stroked line of width 1.
+export const QR_URL = "https://nicholas.dev/deckyssh";
+export const QR_MODULES = 29;
+export const QR_PATH = "M0 0.5h7m3 0h2m1 0h2m1 0h2m4 0h7m-29 1h1m5 0h1m1 0h5m1 0h1m1 0h4m2 0h1m5 0h1m-29 1h1m1 0h3m1 0h1m6 0h2m1 0h1m5 0h1m1 0h3m1 0h1m-29 1h1m1 0h3m1 0h1m1 0h3m1 0h4m1 0h1m2 0h1m1 0h1m1 0h3m1 0h1m-29 1h1m1 0h3m1 0h1m1 0h1m1 0h1m2 0h1m1 0h5m2 0h1m1 0h3m1 0h1m-29 1h1m5 0h1m2 0h1m1 0h2m3 0h1m1 0h1m1 0h1m1 0h1m5 0h1m-29 1h7m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h7m-21 1h2m3 0h1m5 0h2m-20 1h1m1 0h4m1 0h1m6 0h3m2 0h3m1 0h2m1 0h1m-28 1h1m2 0h1m3 0h5m1 0h3m1 0h3m3 0h5m-26 1h2m1 0h4m5 0h2m1 0h2m2 0h4m1 0h1m-22 1h1m3 0h4m3 0h3m5 0h2m2 0h1m-29 1h2m1 0h1m1 0h4m2 0h1m2 0h1m5 0h3m2 0h1m1 0h1m-27 1h1m1 0h1m1 0h1m1 0h1m3 0h2m2 0h1m1 0h2m3 0h1m1 0h1m1 0h1m1 0h1m-27 1h2m2 0h2m1 0h1m1 0h1m1 0h2m3 0h2m2 0h2m1 0h1m2 0h1m-27 1h1m1 0h1m2 0h3m1 0h3m4 0h2m1 0h2m1 0h3m-23 1h1m1 0h2m1 0h3m1 0h7m3 0h1m1 0h1m2 0h1m-29 1h1m2 0h1m1 0h1m7 0h1m2 0h1m1 0h3m3 0h2m-26 1h2m1 0h6m1 0h2m1 0h1m1 0h1m3 0h1m6 0h1m1 0h1m-29 1h2m1 0h2m6 0h1m1 0h1m6 0h4m2 0h2m-28 1h2m1 0h2m1 0h5m2 0h3m1 0h1m2 0h5m1 0h1m-19 1h2m1 0h1m1 0h1m1 0h1m2 0h1m1 0h1m3 0h3m-27 1h7m2 0h2m1 0h1m1 0h7m1 0h1m1 0h1m1 0h2m-28 1h1m5 0h1m1 0h1m3 0h1m3 0h5m3 0h2m1 0h1m-28 1h1m1 0h3m1 0h1m1 0h1m3 0h1m1 0h11m2 0h2m-29 1h1m1 0h3m1 0h1m1 0h1m1 0h1m1 0h1m3 0h3m4 0h1m2 0h2m-28 1h1m1 0h3m1 0h1m4 0h1m1 0h1m2 0h1m3 0h2m1 0h6m-29 1h1m5 0h1m1 0h3m4 0h1m2 0h1m3 0h1m1 0h1m1 0h1m1 0h1m-29 1h7m2 0h1m2 0h1m1 0h1m4 0h2m1 0h3";
