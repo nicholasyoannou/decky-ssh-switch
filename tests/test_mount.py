@@ -105,6 +105,20 @@ else:
                 self.assertNotEqual(result.returncode, 0)
                 self.assertEqual(calls, [])
 
+    def test_ipv6_address_is_refused_with_a_usable_alternative(self):
+        # SSH Switch lists IPv6 addresses, but sshfs splits host from path on a
+        # colon, so one pasted here must be named and redirected, not just rejected.
+        result, calls, _, _ = self.run_mount(address="2a04:201:74de:f300:3e22:7fff:feae:2543")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(calls, [])
+        self.assertIn("IPv6", result.stderr)
+        self.assertIn("steamdeck.local", result.stderr)
+
+    def test_a_bad_address_fails_before_the_later_prompts(self):
+        result, _, _, _ = self.run_mount(address="2a04:201:74de:f300:3e22:7fff:feae:2543")
+        self.assertNotIn("Remote folder", result.stdout)
+        self.assertNotIn("Local mount folder", result.stdout)
+
     def test_occupied_and_nonempty_folders_are_preserved(self):
         for platform in ("Linux", "Darwin"):
             for changes in ({"occupied": True}, {"nonempty": True}):
@@ -133,7 +147,7 @@ else:
                                             input=f"\n\n\n\n{destination}\n", env=env, cwd=root, capture_output=True, text=True)
                     self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(len(self.records(root)), 2)
-                self.assertIn("deck@steamdeck:/home/deck", self.calls(log)[0])
+                self.assertIn("deck@steamdeck.local:/home/deck", self.calls(log)[0])
                 args = ["bash", str(ROOT / f"mount/unmount-{suffix}.sh")]
                 result = subprocess.run(args, env={**env, "MOUNT_BUSY_FOLDER": str(folder)}, capture_output=True, text=True)
                 self.assertNotEqual(result.returncode, 0)

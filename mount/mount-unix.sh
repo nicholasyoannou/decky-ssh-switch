@@ -9,9 +9,16 @@ prompt() {
     printf '%s' "${answer:-$2}"
 }
 
+validate_address() {
+    # SSH Switch lists the Deck's IPv6 addresses, but sshfs splits host from path
+    # on a colon, so one pasted here must be redirected, not merely rejected.
+    [[ $1 != *:* ]] || { fail 'sshfs cannot use an IPv6 address here. Use a hostname such as steamdeck.local, or the IPv4 address shown in SSH Switch.'; return 1; }
+    [[ $1 =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]] || { fail 'Enter an IPv4 address or hostname, without a URL or username.'; return 1; }
+}
+
 validate_connection() {
     # Use the IPv4 address displayed by SSH Switch, or a DNS hostname.
-    [[ $1 =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]] || { fail 'Enter an IPv4 address or hostname, without a URL or username.'; return 1; }
+    validate_address "$1" || return 1
     if [[ ! $2 =~ ^[0-9]{1,5}$ ]] || (( 10#$2 < 1 || 10#$2 > 65535 )); then
         fail 'Port must be between 1 and 65535.'
         return 1
@@ -137,7 +144,9 @@ mount_main() {
 
     local address port username remote folder
     printf '%s\n' 'On your Deck, enable SSH and open SSH Switch > Connect from computer.'
-    address=$(prompt 'Address' 'steamdeck')
+    # Checked here so a bad address fails at its own prompt, not after the rest.
+    address=$(prompt 'Address' 'steamdeck.local')
+    validate_address "$address" || return 1
     port=$(prompt 'Port' '22')
     username=$(prompt 'Username' 'deck')
     remote=$(prompt 'Remote folder' "/home/$username")

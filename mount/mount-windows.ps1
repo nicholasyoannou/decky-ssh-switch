@@ -15,8 +15,15 @@ function Read-Default([string] $Label, [string] $Default) {
     return $answer
 }
 
-function Test-ConnectionInput([string] $Address, [string] $Port, [string] $Username, [string] $RemoteFolder) {
+function Test-AddressInput([string] $Address) {
+    # SSH Switch lists the Deck's IPv6 addresses, but a mount is a UNC path and
+    # a UNC name component cannot hold their colons, so say what works instead.
+    if ($Address -match ':') { throw 'SSHFS-Win cannot mount an IPv6 address. Use a hostname such as steamdeck.local, or the IPv4 address shown in SSH Switch.' }
     if ($Address -cnotmatch '^[a-zA-Z0-9][a-zA-Z0-9.-]*$') { throw 'Enter an IPv4 address or hostname, without a URL or username.' }
+}
+
+function Test-ConnectionInput([string] $Address, [string] $Port, [string] $Username, [string] $RemoteFolder) {
+    Test-AddressInput $Address
     if ($Port -notmatch '^[0-9]{1,5}$' -or [int]$Port -lt 1 -or [int]$Port -gt 65535) { throw 'Port must be between 1 and 65535.' }
     if ($Username -cnotmatch '^[a-zA-Z_][a-zA-Z0-9_-]*\$?$') { throw 'Enter the username shown on the Deck.' }
     if (-not $RemoteFolder.StartsWith('/') -or $RemoteFolder -match '[\x00-\x1f\\:*?"<>|]') { throw 'Remote folder must be an absolute path without Windows-reserved characters.' }
@@ -109,7 +116,9 @@ function Read-Mount([string] $Name, [string] $RemoteFolder, [string] $DefaultDri
 
 function Read-MountSettings {
     Write-Host 'On your Deck, enable SSH and open SSH Switch > Connect from computer.'
-    $address = Read-Default 'Address' 'steamdeck'
+    # Checked here so a bad address fails at its own prompt, not after the rest.
+    $address = Read-Default 'Address' 'steamdeck.local'
+    Test-AddressInput $address
     $port = Read-Default 'Port' '22'
     $username = Read-Default 'Username' 'deck'
     $separate = Read-YesNo 'Create separate Home, SD card and Root drives?' $false

@@ -60,17 +60,29 @@ function Read-Host([string] $Prompt, [switch] $AsSecureString) {
 Set-Answers @('', '', '', '', '', '')
 $single = Read-MountSettings
 Test-MountSettings $single
-Assert-True ($single.Address -ceq 'steamdeck') 'Default hostname changed.'
+Assert-True ($single.Address -ceq 'steamdeck.local') 'Default hostname changed.'
 Assert-True ($single.Mounts.Count -eq 1) 'Extra drives must be opt-in.'
 Assert-True ($single.Mounts[0].Drive -ceq 'S') 'Default drive changed.'
 Assert-True ($single.Mounts[0].RemoteFolder -ceq '/') 'One drive must default to the whole filesystem.'
-Assert-True ((Get-MountPath $single $single.Mounts[0]) -ceq '\\sshfs.r\deck@steamdeck') 'Incorrect single-drive path.'
+Assert-True ((Get-MountPath $single $single.Mounts[0]) -ceq '\\sshfs.r\deck@steamdeck.local') 'Incorrect single-drive path.'
 
 # A home folder is still reachable by typing it at the prompt.
 Set-Answers @('', '', '', '', '/home/deck', '')
 $home_ = Read-MountSettings
 Test-MountSettings $home_
-Assert-True ((Get-MountPath $home_ $home_.Mounts[0]) -ceq '\\sshfs.r\deck@steamdeck\home\deck') 'A typed remote folder must still be used.'
+Assert-True ((Get-MountPath $home_ $home_.Mounts[0]) -ceq '\\sshfs.r\deck@steamdeck.local\home\deck') 'A typed remote folder must still be used.'
+
+# The plugin lists IPv6 addresses, but a UNC path cannot carry their colons.
+# Refuse one at the prompt it was typed at, and name what to use instead.
+Set-Answers @('2a04:201:74de:f300:3e22:7fff:feae:2543')
+$ipv6Error = ''
+try { Read-MountSettings } catch { $ipv6Error = $_.Exception.Message }
+Assert-True ($ipv6Error -match 'IPv6') 'An IPv6 address must be named in the error.'
+Assert-True ($ipv6Error -match 'steamdeck\.local') 'The error must point at a usable hostname.'
+Assert-True ($script:prompts.Count -eq 1) 'A bad address must fail at its own prompt, not after the rest.'
+Assert-Throws { Test-AddressInput 'fe80::1' }
+Test-AddressInput 'steamdeck.local'
+Test-AddressInput '192.0.2.10'
 Set-Answers @('')
 Assert-True (Read-YesNo 'Save?' $true) 'Saving must default to Yes.'
 Set-Answers @('invalid', 'NO')

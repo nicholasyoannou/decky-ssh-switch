@@ -40,12 +40,14 @@ The mounting helpers are included in [GitHub Releases](https://github.com/nichol
 | **[Linux](https://github.com/nicholasyoannou/decky-ssh-switch/releases/latest/download/ssh-switch-mount-linux.zip)** | Run `bash mount-linux.sh` in the extracted folder |
 | **[macOS](https://github.com/nicholasyoannou/decky-ssh-switch/releases/latest/download/ssh-switch-mount-macos.zip)** | Run `bash mount-macos.sh` in the extracted folder |
 
+The address defaults to `steamdeck.local`, resolved over mDNS — built in on Windows and macOS, and provided by `nss-mdns` or systemd-resolved on Linux. If that name does not resolve, enter the IPv4 address from **Connect from computer**. The helpers cannot take an IPv6 address: sshfs reads the colons as the host/path separator, and a Windows UNC name component cannot contain them at all.
+
 Unmount helpers leave saved settings, local folders and unrelated drives alone. If a mount is busy, close files using it and retry.
 
 ### Windows
 
 1. Double-click `mount-windows.cmd`. It opens PowerShell and installs missing [SSHFS-Win and WinFsp](https://github.com/winfsp/sshfs-win) dependencies through WinGet. Approve the administrator prompt if shown.
-2. Enter your connection details. The defaults are `steamdeck` and one persistent `S:` drive holding the whole Deck from `/`, so the home folder and the SD card are both inside it. Enter a different remote folder to narrow it. Separate Home, SD card and Root drives are optional and default to **No**.
+2. Enter your connection details. The defaults are `steamdeck.local` and one persistent `S:` drive holding the whole Deck from `/`, so the home folder and the SD card are both inside it. Enter a different remote folder to narrow it. Separate Home, SD card and Root drives are optional and default to **No**.
 3. Choose whether to **Save settings and password** (default **Yes**). The password is encrypted for your Windows account on this PC. Later runs reconnect using the saved setup.
 
 - **Disconnect:** double-click `unmount-windows.cmd`. Closing the mounting script leaves the drives connected.
